@@ -1,31 +1,38 @@
-# browboxs-app-releases
+# browboxs-app-releases（公开 · 安装包 / pack / 更新）
 
-**Public installers only** — no full product source tree.
+| 内容 | 说明 |
+|------|------|
+| GitHub Releases | 用户安装包（多格式）+ `RELEASE-SHA256SUMS.txt` |
+| `INSTALL.md` | **按 OS 拆分的安装说明与系统要求**（Clash Verge 风格） |
+| `scripts/pack-kit-to-release.sh` | kit → 用户资产（**不**编译核心源码） |
+| `.github/workflows/pack-and-test.yml` | **每平台×架构一 runner** free-runner 矩阵 |
+| prerelease `kits-v*` | 私有 core 上传的无源码 kit 中转 |
 
-| Channel | Content |
-|---------|---------|
-| Release `v*` | End-user portable packages: `browboxs-<ver>-<os>-<arch>.tar.gz` |
-| Prerelease `kits-v*` | Internal transfer kits from private monorepo (binaries + UI assets) |
+## 禁止
 
-## Hybrid pipeline (private minutes → public packaging)
+- 完整 monorepo / `crates/` 业务源码  
+- 生产密钥  
+- 在 public runner 上 `cargo build -p browboxs-client-agent`
 
-1. **Private** [`browboxs-v2-private`](https://github.com/wpmmcc/browboxs-v2-private) runs `prepare-kits`  
-   → compiles agent/server (+ UI) per platform → uploads `kit-*.tar.gz` here as prerelease  
-   → `repository_dispatch` `kits-ready`
-2. **This public repo** runs `pack-and-test` (uses **public** Actions minutes)  
-   → renames kits to user assets  
-   → **install smoke** (extract / install-system / agent `/v1/health`)  
-   → publishes `v*` Release
-
-See monorepo doc: `docs/PACKAGING-HYBRID-PRIVATE-PUBLIC.md`.
-
-## Manual re-pack
+## 同步（从私有 core monorepo）
 
 ```bash
-gh workflow run pack-and-test.yml -R wpmmcc/browboxs-app-releases \
-  -f version=0.1.0 -f kit_tag=kits-v0.1.0
+# 在 core monorepo 根：
+bash scripts/sync-to-public-releases.sh --all --version 0.1.0
 ```
 
-## Engines
+## 打包类型
 
-Fingerprint engines: [browboxs-engines-releases](https://github.com/wpmmcc/browboxs-engines-releases) (separate channel).
+见 `docs/PACKAGING-TYPES-AND-COMPAT.md`（与 monorepo 同源）。
+
+| 平台 | P0 形态 | Runner |
+|------|---------|--------|
+| Linux x64 | tar + deb + AppImage | ubuntu-22.04 |
+| Linux arm64 | tar + deb + AppImage | ubuntu-24.04-arm |
+| Windows x64 | tar + portable（+ nsis 有工具时） | windows-latest |
+| macOS arm64 | tar（+ dmg 有工具时） | macos-latest |
+| macOS x64 | tar | macos-latest |
+
+## 安装
+
+见 [INSTALL.md](./INSTALL.md)。
