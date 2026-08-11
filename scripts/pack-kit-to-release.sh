@@ -432,13 +432,11 @@ if [ "$RUN_SMOKE" = "1" ] && [ -f "$STAGE/bin/browboxs-agent" ]; then
     # Older kits may still SERVE_UI — warn, do not fail whole pack if health ok
     echo "WARN: agent / not clearly API-only (old kit?): ${ROOT_BODY:0:120}"
   fi
-  if [ "$CODE" = "401" ]; then
-    echo "unauth profiles 401 OK"
-  elif [ "$CODE" = "200" ]; then
-    echo "WARN: unauth profiles returned 200 (older kit without auth)"
-  else
-    echo "WARN: unauth profiles HTTP $CODE"
-  fi
+  case "$CODE" in
+    401|403) echo "unauth profiles $CODE OK" ;;
+    200) echo "WARN: unauth profiles returned 200 (auth open / no token required)" ;;
+    *) echo "WARN: unauth profiles HTTP $CODE" ;;
+  esac
   echo "pack smoke OK (health; root/auth warnings non-fatal for legacy kits)"
   fi
 fi

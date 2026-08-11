@@ -1,56 +1,54 @@
-# browboxs-app-releases（公开 · 安装包 / pack / 更新）
+# browboxs-app-releases（公开 · MAIN 安装包 / pack / 更新）
+
+> **正式分支：`main`**。验证分支 `test/cross-pack-*` 仅试验，合入后以 main 为准。  
+> 全链路 SoT：`docs/RELEASE-MAIN-PIPELINE.md`
 
 | 内容 | 说明 |
 |------|------|
-| GitHub Releases | 用户安装包（多格式）+ `RELEASE-SHA256SUMS.txt` |
-| `INSTALL.md` | **按 OS 拆分的安装说明与系统要求**（Clash Verge 风格） |
+| GitHub Releases `v*` | 用户安装包（多格式）+ `RELEASE-SHA256SUMS.txt` |
+| prerelease `kits-v*` | 私有 core 上传的 **无源码** kit 中转 |
+| `INSTALL.md` | 按 OS 安装说明与系统要求（Clash Verge 风格） |
 | `scripts/pack-kit-to-release.sh` | kit → 用户资产（**不**编译核心源码） |
-| `.github/workflows/pack-and-test.yml` | **每平台×架构一 runner** free-runner 矩阵 |
-| prerelease `kits-v*` | 私有 core 上传的无源码 kit 中转 |
+| `scripts/public-runner-product-smoke.sh` | 包结构 + API + 更新源 |
+| `scripts/public-runner-ui-function-smoke.sh` | **S3** 安装后 UI/功能门禁（薄封装） |
+| `.github/workflows/pack-and-test.yml` | S1 pack → publish → S2 install → S3 UI |
 
 ## 禁止
 
 - 完整 monorepo / `crates/` 业务源码  
 - 生产密钥  
-- 在 public runner 上 `cargo build -p browboxs-client-agent`
+- 在 public runner 上 `cargo build` 核心 crates  
 
-## 同步（从私有 core monorepo）
+## MAIN 流程
 
-```bash
-# 在 core monorepo 根：
-bash scripts/sync-to-public-releases.sh --all --version 0.1.0
+```text
+私有 prepare-kits (main) → kits-v* → 公开 pack-and-test (main)
+  → pack + product-smoke
+  → publish v*
+  → install-from-release
+  → ui-function smoke
 ```
 
-## 打包类型
+```bash
+# 从私有 monorepo 同步脚本到本仓 main：
+bash scripts/sync-to-public-releases.sh --push-scripts --version 0.2.5
 
-见 `docs/PACKAGING-TYPES-AND-COMPAT.md`（与 monorepo 同源）。
+# 重跑 pack（kit 已存在）：
+gh workflow run pack-and-test.yml -R wpmmcc/browboxs-app-releases --ref main \
+  -f version=0.2.5 -f kit_tag=kits-v0.2.5 -f publish=true
+```
 
-| 平台 | P0 形态 | Runner |
-|------|---------|--------|
-| Linux x64 | tar + deb + AppImage | ubuntu-22.04 |
-| Linux arm64 | tar + deb + AppImage | ubuntu-24.04-arm |
-| Windows x64 | tar + portable（+ nsis 有工具时） | windows-latest |
-| macOS arm64 | tar（+ dmg 有工具时） | macos-latest |
-| macOS x64 | tar | macos-latest |
+## 矩阵
+
+| 平台 | kit | runner |
+|------|-----|--------|
+| Linux x64 | kit-linux-x86_64 | ubuntu-22.04 |
+| Linux arm64 | kit-linux-aarch64 | ubuntu-24.04-arm |
+| Windows x64 | kit-windows-x86_64 | windows-latest |
+| Windows arm64 | kit-windows-aarch64 | windows-11-arm |
+| macOS arm64 | kit-darwin-aarch64 | macos-latest |
+| macOS x64 | kit-darwin-x86_64 | macos-latest |
 
 ## 安装
 
-见 [INSTALL.md](./INSTALL.md)。
-
-## 公开 Runner 测试（找问题）
-
-`pack-and-test` 在 **每平台原生 runner** 上：
-
-1. 下载 **无源码 binary kit**（禁止 kit 内含 `crates/` / `Cargo.toml`）
-2. `pack-kit-to-release` 注入 `update-modules` + own-source manifest → tree/portable/deb…
-3. **`public-runner-product-smoke.sh`**：
-   - 包结构 / 无源码泄露
-   - agent health · 鉴权 401/Bearer
-   - **UI 对应 API 矩阵**（profiles / proxies / workflows / cookies / fingerprint / updates…）
-   - 根路径禁止 SPA 控制台
-   - 更新源 = 本仓 tree；引擎源分离
-   - Linux：portable + deb 各再跑一轮 smoke
-   - 可选 `browboxs-desktop` + xvfb
-
-核心业务只以 **二进制** 参与公开打包；完整源码仅私有 monorepo。
-
+见 [INSTALL.md](./INSTALL.md)。架构细节见 [docs/RELEASE-MAIN-PIPELINE.md](./docs/RELEASE-MAIN-PIPELINE.md)。
