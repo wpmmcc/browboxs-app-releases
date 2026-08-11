@@ -1,0 +1,5 @@
+scripts/ui-e2e/node_modules/
+scripts/ui-e2e/package-lock.json
+dist/
+kits/
+*.log
