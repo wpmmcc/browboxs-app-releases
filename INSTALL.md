@@ -103,3 +103,29 @@ sha256sum -c browboxs-0.1.0-linux-x86_64.tar.gz.sha256
 | kits-v* prerelease | 私有 CI 中转的无源码 kit（非最终用户包） |
 
 请认准仓库 owner，谨防仿冒。
+
+---
+
+## 热更新（各安装类型 → 自己的源）
+
+所有安装形态（tree / portable / deb / AppImage / NSIS / DMG）装好后，**模块热更新只走本仓库的 tree 资产**，不走第三方源：
+
+| 安装类型 | 安装资产示例 | 热更新脚本 | 更新源 | 下载资产 |
+|----------|--------------|------------|--------|----------|
+| tree | `browboxs-<ver>-linux-x86_64.tar.gz` | `scripts/update-modules.sh` | **本仓** `wpmmcc/browboxs-app-releases` | `browboxs-<ver>-<os>-<arch>.tar.gz` |
+| portable | `…-portable.zip` | 同上（包内同脚本） | **本仓** app-releases | 同上 tree tar（非 zip） |
+| deb | `…-linux-x86_64.deb` | `/opt/browboxs/scripts/update-modules.sh` | **本仓** app-releases | 同上 tree tar |
+| nsis / dmg | 系统安装器 | 安装树内同脚本 | **本仓** app-releases | 同上 tree tar |
+
+```bash
+# 检查更新（只读）
+BROWBOX_INSTALL_ROOT=$HOME/.local/opt/browboxs \
+  bash $BROWBOX_INSTALL_ROOT/scripts/update-modules.sh --check
+
+# 应用热更新（下载 platform tree + 校验 sha256 + 覆盖 bin/modules/ui/scripts）
+BROWBOX_INSTALL_ROOT=$HOME/.local/opt/browboxs \
+  bash $BROWBOX_INSTALL_ROOT/scripts/update-modules.sh
+```
+
+包内 `modules/manifest.json` 的 `github` / `github_app` 指向 **app-releases**；`github_engines` 指向 **engines-releases**（指纹引擎独立频道，不与 app 混下）。  
+`modules/INSTALL_TYPE` · `modules/UPDATE_SOURCE.txt` 标明本包安装形态与更新源约定。

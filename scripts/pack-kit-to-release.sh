@@ -185,12 +185,135 @@ if [ "$ALLOW_MISSING_DESKTOP" != "1" ]; then
   fi
 fi
 
+# ── Normalize stage: inject own-source update scripts + stamp version/manifest ──
+# Kit may be older than public pack scripts; release packages MUST ship the current
+# update-modules that reads modules/manifest.json → github / github_app only.
+normalize_stage() {
+  local stage="$1"
+  local install_type="${2:-tree}"
+  mkdir -p "$stage/scripts" "$stage/modules" "$stage/docs"
+
+  # Prefer pack-side scripts (public mirror or monorepo), fall back to stage
+  for s in update-modules.sh install-system.sh uninstall-system.sh \
+           verify-package-integrity.sh verify-package-security.sh; do
+    for src in \
+      "$ROOT/scripts/$s" \
+      "$ROOT/packaging/public-app-releases/scripts/$s" \
+      "$stage/scripts/$s"; do
+      if [ -f "$src" ]; then
+        cp -f "$src" "$stage/scripts/$s"
+        break
+      fi
+    done
+  done
+  chmod +x "$stage/scripts/"*.sh 2>/dev/null || true
+
+  echo "$VER" >"$stage/modules/VERSION"
+  echo "$install_type" >"$stage/modules/INSTALL_TYPE"
+  cat >"$stage/modules/UPDATE_SOURCE.txt" <<EOF
+# browboxs update channel (own source — do not point at third-party mirrors)
+install_type=${install_type}
+app_channel=github_app
+app_repo=wpmmcc/browboxs-app-releases
+app_hot_update_asset=browboxs-<ver>-<os>-<arch>.tar.gz
+engines_channel=github_engines
+engines_repo=wpmmcc/browboxs-engines-releases
+notes=All install types (tree/portable/deb/appimage/nsis/dmg) hot-update via the platform TREE tarball from app-releases. Engines never use the app channel.
+update_script=scripts/update-modules.sh
+EOF
+
+  if command -v python3 >/dev/null 2>&1 && [ -f "$stage/modules/manifest.json" ]; then
+    python3 - "$stage/modules/manifest.json" "$VER" "$install_type" <<'PY'
+import json, sys
+path, ver, itype = sys.argv[1], sys.argv[2], sys.argv[3]
+m = json.load(open(path))
+m["product_version"] = ver
+m.setdefault("product", "browboxs")
+m.setdefault("channel", "stable")
+# App channel = this package's own public releases repo
+for key in ("github", "github_app"):
+    g = m.setdefault(key, {})
+    g["owner"] = g.get("owner") or "wpmmcc"
+    g["repo"] = g.get("repo") or "browboxs-app-releases"
+    g["api"] = "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    g["notes"] = (
+        "APP channel only. Hot-update uses browboxs-<ver>-<os>-<arch>.tar.gz "
+        "from THIS repo. Engines use github_engines only."
+    )
+# Engines channel must stay separate
+ge = m.setdefault("github_engines", {})
+ge["owner"] = ge.get("owner") or "wpmmcc"
+ge["repo"] = ge.get("repo") or "browboxs-engines-releases"
+ge["api"] = "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+ge.setdefault("store_path", "STORE.json")
+# Per-install-type update mapping (all → tree asset on app channel)
+pkg = m.setdefault("packaging", {})
+pkg["doc"] = "docs/PACKAGING-TYPES-AND-COMPAT.md"
+pkg["app_asset_pattern"] = "browboxs-<ver>-<os>-<arch>.tar.gz"
+pkg["hot_update_asset"] = "tree"
+pkg["install_type"] = itype
+pkg["install_types"] = {
+    "tree": {
+        "update_source": "github_app",
+        "update_asset": "browboxs-<ver>-<os>-<arch>.tar.gz",
+    },
+    "portable": {
+        "update_source": "github_app",
+        "update_asset": "browboxs-<ver>-<os>-<arch>.tar.gz",
+        "notes": "portable install still hot-updates via tree tarball",
+    },
+    "deb": {
+        "update_source": "github_app",
+        "update_asset": "browboxs-<ver>-<os>-<arch>.tar.gz",
+        "notes": "apt package optional; module hot-update via GitHub tree",
+    },
+    "appimage": {
+        "update_source": "github_app",
+        "update_asset": "browboxs-<ver>-<os>-<arch>.tar.gz",
+    },
+    "nsis": {
+        "update_source": "github_app",
+        "update_asset": "browboxs-<ver>-<os>-<arch>.tar.gz",
+    },
+    "dmg": {
+        "update_source": "github_app",
+        "update_asset": "browboxs-<ver>-<os>-<arch>.tar.gz",
+    },
+}
+open(path, "w").write(json.dumps(m, indent=2) + "\n")
+print(f"    manifest stamped product_version={ver} install_type={itype} github_app={m['github_app']['owner']}/{m['github_app']['repo']}")
+PY
+  fi
+
+  # Refresh package SHA256SUMS for integrity script (binaries + key files)
+  if command -v sha256sum >/dev/null 2>&1; then
+    (
+      cd "$stage" || exit 0
+      : >SHA256SUMS
+      for f in bin/browboxs-agent bin/browboxs-server bin/browboxs-desktop \
+               modules/manifest.json scripts/update-modules.sh; do
+        if [ -f "$f" ]; then
+          sha256sum "$f" >>SHA256SUMS || true
+        elif [ -f "${f}.exe" ]; then
+          sha256sum "${f}.exe" >>SHA256SUMS || true
+        fi
+      done
+      true
+    ) || true
+  fi
+}
+
 # Desktop entry note in package
 if [ ! -f "$STAGE/INSTALL.txt" ]; then
   cat >"$STAGE/INSTALL.txt" <<EOF
 Product entry: bin/browboxs-desktop (not browser on Local API port).
+Hot-update: bash scripts/update-modules.sh  (source: wpmmcc/browboxs-app-releases tree tar)
+Engines:     separate channel wpmmcc/browboxs-engines-releases
 EOF
 fi
+
+echo "== normalize stage (inject update scripts + own-source manifest) =="
+normalize_stage "$STAGE" "tree"
 
 mkdir -p "$OUT_DIR"
 echo "== pack kinds: $PACK_KINDS =="
@@ -205,6 +328,8 @@ echo "PACK OK tree: $OUT_TAR sha256=$SUM"
 
 # Portable zip (Windows-oriented; also useful on any OS)
 if kind_has portable; then
+  # Stamp install type for this artifact only (copy then restore)
+  normalize_stage "$STAGE" "portable"
   PORT="browboxs-${VER}-${OS_ARCH}-portable.zip"
   if command -v zip >/dev/null 2>&1; then
     (cd "$WORK" && zip -qr "${OUT_DIR}/${PORT}" browboxs)
@@ -218,12 +343,14 @@ if kind_has portable; then
     append_sum "$PSUM" "browboxs-${VER}-${OS_ARCH}-portable.tar.gz"
     echo "PACK OK portable(tar fallback): zip not installed"
   fi
+  normalize_stage "$STAGE" "tree"
 fi
 
 # Optional native installers when artifacts already in kit (from private tauri bundle)
 # or when fpm/dpkg-deb available for simple repack of tree.
 if kind_has deb && command -v dpkg-deb >/dev/null 2>&1; then
   echo "== best-effort deb from tree =="
+  normalize_stage "$STAGE" "deb"
   DEB_ROOT="$WORK/deb-root"
   rm -rf "$DEB_ROOT"
   mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/opt/browboxs"
@@ -244,6 +371,7 @@ EOF
   else
     echo "WARN: dpkg-deb failed — skip deb"
   fi
+  normalize_stage "$STAGE" "tree"
 fi
 
 # Collect any prebuilt installers dropped into kit (optional private-side bundles)
