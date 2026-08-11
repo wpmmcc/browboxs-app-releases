@@ -111,14 +111,23 @@ fi
 ok "agent health"
 
 TOKEN=""
-for t in "$BROWBOX_AGENT_DATA/local_session.token" "$INSTALL/data/agent/local_session.token"; do
+for t in \
+  "$BROWBOX_AGENT_DATA/local_session.token" \
+  "$INSTALL/data/agent/local_session.token" \
+  "$REPORT/agent-data/local_session.token"; do
   if [ -f "$t" ]; then TOKEN=$(tr -d '\n\r' <"$t"); break; fi
 done
+if [ -z "$TOKEN" ]; then
+  t=$(find "$BROWBOX_AGENT_DATA" -name 'local_session.token' 2>/dev/null | head -1 || true)
+  [ -n "${t:-}" ] && [ -f "$t" ] && TOKEN=$(tr -d '\n\r' <"$t")
+fi
 if [ -z "$TOKEN" ]; then
   tpath=$(grep -oE 'path=[^ ]+local_session.token' "$REPORT/agent.log" 2>/dev/null | head -1 | cut -d= -f2- || true)
   [ -n "${tpath:-}" ] && [ -f "$tpath" ] && TOKEN=$(tr -d '\n\r' <"$tpath")
 fi
-[ -n "$TOKEN" ] && ok "session token" || warn "no session token — API create limited"
+if [ -n "$TOKEN" ]; then ok "session token (${#TOKEN} chars)"
+else warn "no session token — write API may still work if auth open"
+fi
 
 # ── static UI server (package ui/desktop) ──
 if command -v python3 >/dev/null 2>&1; then

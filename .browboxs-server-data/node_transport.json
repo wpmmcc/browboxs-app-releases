@@ -1,0 +1,77 @@
+{
+  "node_id": "1a5a9253-79e3-4dc7-9f1a-ebc339c66707",
+  "display_name": "本机节点",
+  "listen_port": 18900,
+  "lan": {
+    "enabled": true,
+    "endpoints": [
+      "http://192.168.1.5:18900",
+      "http://192.168.1.12:18900",
+      "http://172.17.0.1:18900",
+      "http://172.18.0.1:18900",
+      "http://127.0.0.1:18900"
+    ],
+    "base_url": null,
+    "auto_detect": true,
+    "domain": null,
+    "node_token": null,
+    "official_base": null,
+    "tls_pin_sha256": null,
+    "cf_mode": null,
+    "cf_tunnel_token": null,
+    "cf_running": false,
+    "cf_last_error": null
+  },
+  "public": {
+    "enabled": true,
+    "endpoints": [
+      "https://127.0.0.1:19343"
+    ],
+    "base_url": "https://127.0.0.1:19343",
+    "auto_detect": false,
+    "domain": null,
+    "node_token": null,
+    "official_base": null,
+    "tls_pin_sha256": "6679f1928792c48f2b19b05357082e1e034fc4a4cba313ed7b445c53521cd6fa",
+    "cf_mode": null,
+    "cf_tunnel_token": null,
+    "cf_running": false,
+    "cf_last_error": null
+  },
+  "cf_tunnel": {
+    "enabled": false,
+    "endpoints": [],
+    "base_url": null,
+    "auto_detect": false,
+    "domain": null,
+    "node_token": null,
+    "official_base": null,
+    "tls_pin_sha256": null,
+    "cf_mode": null,
+    "cf_tunnel_token": null,
+    "cf_running": false,
+    "cf_last_error": null
+  },
+  "official": {
+    "enabled": false,
+    "endpoints": [],
+    "base_url": null,
+    "auto_detect": false,
+    "domain": null,
+    "node_token": null,
+    "official_base": null,
+    "tls_pin_sha256": null,
+    "cf_mode": null,
+    "cf_tunnel_token": null,
+    "cf_running": false,
+    "cf_last_error": null
+  },
+  "suggested_priority": [
+    "lan",
+    "public",
+    "cf_tunnel",
+    "official"
+  ],
+  "node_fingerprint": "88b2bce529c1d6c1b8c383e1a11de2a6a55f3d76baeb6bcef8f87116d8123c09",
+  "updated_at": "2026-08-11T17:52:11.615668752Z"
+}

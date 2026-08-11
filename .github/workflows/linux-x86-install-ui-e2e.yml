@@ -1,0 +1,70 @@
+# Linux x86_64 only — install package UI + function e2e (public free runner probe).
+# Use this to validate hardened workbench tests without multi-OS matrix cost.
+name: linux-x86-install-ui-e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (asset browboxs-VERSION-linux-x86_64.tar.gz)
+        required: true
+        type: string
+        default: "0.2.4"
+      package_url:
+        description: Optional direct asset URL (overrides version download)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Linux deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb curl ca-certificates python3 \
+            libgtk-3-0 libwebkit2gtk-4.1-0 || true
+      - name: Download package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PACKAGE_URL: ${{ inputs.package_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p dl
+          if [ -n "${PACKAGE_URL}" ]; then
+            curl -fsSL "$PACKAGE_URL" -o "dl/browboxs-${VERSION}-linux-x86_64.tar.gz"
+          else
+            A="browboxs-${VERSION}-linux-x86_64.tar.gz"
+            gh release download "v${VERSION}" -R "${{ github.repository }}" \
+              -p "$A" -p "${A}.sha256" -D dl
+            (cd dl && sha256sum -c "${A}.sha256" || shasum -a 256 -c "${A}.sha256")
+          fi
+          ls -lah dl/
+      - name: Run install UI + function e2e
+        env:
+          VERSION: ${{ inputs.version }}
+          BROWBOX_SMOKE_SOFT: "0"
+          BROWBOX_UI_E2E_STRICT: "1"
+          BROWBOX_UI_E2E_HEADLESS: "0"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh scripts/ui-e2e/* || true
+          PKG=$(ls dl/browboxs-*-linux-x86_64.tar.gz | head -1)
+          bash scripts/run-linux-x86-install-ui-e2e.sh "$PKG"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-x86-ui-e2e-report
+          path: |
+            /tmp/bb-linux-x86-e2e-*/reports/**
+          if-no-files-found: ignore
+          retention-days: 7

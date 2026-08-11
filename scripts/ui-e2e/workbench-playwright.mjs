@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Headed workbench UI click e2e (Playwright) against installed package UI static.
- * Product menus are clicked in a real Chromium window (use xvfb-run on Linux CI).
+ * Hardened workbench UI + function e2e (Playwright) against installed package.
+ * Mirrors local tests/user_click + create-env wizard (nav.ts + CreateEnvironment).
  *
  * Usage:
  *   node workbench-playwright.mjs --url http://127.0.0.1:UI --agent http://127.0.0.1:AGENT --out DIR
  *
  * Env:
  *   BROWBOX_UI_E2E_HEADLESS=0|1   default 0 (headed)
- *   BROWBOX_UI_E2E_TOKEN=...      optional Bearer for API checks
+ *   BROWBOX_UI_E2E_TOKEN=...      Bearer (optional if agent allows unauth write)
+ *   BROWBOX_UI_E2E_STRICT_NAV=1   fail if any nav item missing (default 1)
  */
 import fs from "fs";
 import path from "path";
@@ -27,25 +28,26 @@ const AGENT = (arg("--agent", process.env.BROWBOX_UI_E2E_AGENT || "http://127.0.
 );
 const OUT = arg("--out", process.env.BROWBOX_UI_E2E_OUT || "/tmp/bb-ui-e2e");
 const HEADLESS = (process.env.BROWBOX_UI_E2E_HEADLESS || "0") === "1";
-const TOKEN = process.env.BROWBOX_UI_E2E_TOKEN || "";
+let TOKEN = process.env.BROWBOX_UI_E2E_TOKEN || "";
+const STRICT_NAV = (process.env.BROWBOX_UI_E2E_STRICT_NAV || "1") === "1";
 
 fs.mkdirSync(OUT, { recursive: true });
 
-// Must match apps/desktop/src/layout/nav.ts NAV_GROUPS labels
-const MENUS = [
-  "环境管理",
-  "新建环境",
-  "内核引擎",
-  "代理中心",
-  "子账号",
-  "设备",
-  "工作流 RPA",
-  "任务中心",
-  "运营工具",
-  "节点域名",
-  "日志中心",
-  "更新与模块",
-  "设置",
+/** Must match apps/desktop/src/layout/nav.ts */
+const NAV = [
+  { id: "profiles", label: "环境管理", expect: /环境管理|共\s*\d+|筛选/ },
+  { id: "create", label: "新建环境", expect: /新建环境|基础信息|多步向导/ },
+  { id: "engines", label: "内核引擎", expect: /内核|引擎|fingerprint|camoufox/i },
+  { id: "proxy", label: "代理中心", expect: /代理|HTTP|SOCKS/ },
+  { id: "accounts", label: "子账号", expect: /子账号|成员|角色|会话/ },
+  { id: "devices", label: "设备", expect: /设备|在线|登记/ },
+  { id: "workflows", label: "工作流 RPA", expect: /工作流|RPA|模板|步骤/ },
+  { id: "tasks", label: "任务中心", expect: /任务|执行|批次/ },
+  { id: "ops", label: "运营工具", expect: /运营|模板|检测|账密|Syncer/ },
+  { id: "node", label: "节点域名", expect: /节点|域名|本机服务|连接/ },
+  { id: "logs", label: "日志中心", expect: /日志|操作|摘要/ },
+  { id: "updates", label: "更新与模块", expect: /更新|模块|GitHub|检查/ },
+  { id: "settings", label: "设置", expect: /设置|Local API|路径|引擎组/ },
 ];
 
 const report = {
@@ -53,11 +55,24 @@ const report = {
   mode: HEADLESS ? "playwright-headless" : "playwright-headed",
   uiUrl: UI_URL,
   agent: AGENT,
+  steps: [],
   clicks: [],
   api: [],
+  forms: [],
   errors: [],
   screenshots: [],
 };
+
+function fail(msg) {
+  report.ok = false;
+  report.errors.push(msg);
+  console.error("FAIL:", msg);
+}
+
+function step(name, detail) {
+  report.steps.push({ name, ...detail, t: new Date().toISOString() });
+  console.log("STEP", name, detail?.ok === false ? "FAIL" : "ok", detail?.note || "");
+}
 
 async function api(method, p, body) {
   const headers = { "Content-Type": "application/json" };
@@ -74,17 +89,25 @@ async function api(method, p, body) {
   } catch {
     /* ignore */
   }
-  return { status: r.status, json, text: text.slice(0, 200) };
+  return { status: r.status, json, text: text.slice(0, 400) };
 }
 
 async function main() {
-  // API preflight (workbench dependencies)
+  // ── API function preflight ──
   for (const p of ["/v1/health", "/v1/profiles", "/v1/proxies", "/v1/workflows", "/v1/engines"]) {
     const r = await api("GET", p);
     report.api.push({ path: p, status: r.status });
     if (r.status !== 200 && r.status !== 401) {
-      report.errors.push(`api ${p} → ${r.status}`);
+      fail(`api GET ${p} → ${r.status}`);
+    } else {
+      step(`api GET ${p}`, { ok: true, status: r.status });
     }
+  }
+
+  // Discover token if empty (agent may write session file path in logs — caller sets env)
+  if (!TOKEN) {
+    // try unauth; if 401 later create will fail and we report
+    step("token", { ok: true, note: TOKEN ? "provided" : "empty (rely on open auth or later fail)" });
   }
 
   const browser = await chromium.launch({
@@ -96,118 +119,276 @@ async function main() {
     ignoreHTTPSErrors: true,
   });
   const page = await context.newPage();
+  page.setDefaultTimeout(15000);
 
   const target = UI_URL.includes("?")
     ? `${UI_URL}&agent=${encodeURIComponent(AGENT)}`
     : `${UI_URL.replace(/\/?$/, "/")}?agent=${encodeURIComponent(AGENT)}`;
 
-  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.waitForTimeout(1500);
+  await page.goto(target, { waitUntil: "networkidle", timeout: 90000 }).catch(async () => {
+    await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
+  });
+  await page.waitForTimeout(800);
 
-  // Wait for nav shell
-  let hasNav = false;
-  for (let i = 0; i < 40; i++) {
-    hasNav = (await page.locator("nav button").count()) > 0;
-    if (hasNav) break;
-    await page.waitForTimeout(250);
+  // Root shell
+  const root = page.getByTestId("workbench-root");
+  try {
+    await root.waitFor({ state: "visible", timeout: 30000 });
+    step("workbench-root", { ok: true });
+  } catch {
+    // fallback: nav present
+    const n = await page.locator("nav button").count();
+    if (n < 5) fail("workbench shell not visible (no workbench-root / nav)");
+    else step("workbench-root", { ok: true, note: "nav fallback" });
   }
 
-  const probe = {
+  // Wait for nav
+  await page.locator("nav button").first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
+  const navProbe = await page.locator("nav button").allTextContents();
+  report.probe = {
     title: await page.title(),
     href: page.url(),
-    nav: await page.locator("nav button").allTextContents(),
-    bodySnippet: ((await page.locator("body").innerText().catch(() => "")) || "").slice(0, 200),
+    nav: navProbe,
   };
-  report.probe = probe;
-  fs.writeFileSync(path.join(OUT, "ui-probe.json"), JSON.stringify(probe, null, 2));
+  fs.writeFileSync(path.join(OUT, "ui-probe.json"), JSON.stringify(report.probe, null, 2));
 
   const shot = async (name) => {
     const f = path.join(OUT, name);
     await page.screenshot({ path: f, fullPage: true });
-    report.screenshots.push(f);
+    report.screenshots.push(path.basename(f));
+    return f;
   };
   await shot("01-home.png");
 
-  if (!hasNav || !(probe.nav || []).length) {
-    report.ok = false;
-    report.errors.push("no-nav-buttons — workbench shell did not render");
-  } else {
-    for (const label of MENUS) {
-      const btn = page.locator("nav button").filter({ hasText: label }).first();
-      const n = await btn.count();
-      if (n === 0) {
-        // partial match across all nav
-        const all = probe.nav || [];
-        const hit = all.find((t) => (t || "").includes(label));
-        if (!hit) {
-          report.clicks.push({ label, ok: false, reason: "not-found" });
+  if ((navProbe || []).length < 8) {
+    fail(`nav too sparse: ${JSON.stringify(navProbe)}`);
+  }
+
+  // ── Nav click + panel content assertion ──
+  let navOk = 0;
+  for (const item of NAV) {
+    const byTestId = page.getByTestId(`nav-${item.id}`);
+    let clicked = false;
+    try {
+      if ((await byTestId.count()) > 0) {
+        await byTestId.click({ timeout: 8000 });
+        clicked = true;
+      } else {
+        const btn = page.locator("nav button").filter({ hasText: item.label }).first();
+        if ((await btn.count()) === 0) {
+          report.clicks.push({ label: item.label, id: item.id, ok: false, reason: "not-found" });
+          if (STRICT_NAV) fail(`nav missing: ${item.label} (${item.id})`);
           continue;
         }
+        await btn.click({ timeout: 8000 });
+        clicked = true;
       }
-      try {
-        const targetBtn =
-          n > 0 ? btn : page.locator("nav button").filter({ hasText: new RegExp(label) }).first();
-        await targetBtn.click({ timeout: 5000 });
-        await page.waitForTimeout(400);
-        report.clicks.push({ label, ok: true });
-      } catch (e) {
-        report.clicks.push({ label, ok: false, reason: String(e).slice(0, 120) });
-        report.errors.push(`click ${label}: ${e}`);
-      }
-    }
-    await shot("02-after-nav.png");
+      await page.waitForTimeout(500);
 
-    // Create environment panel interaction (best-effort DOM)
-    try {
-      const createNav = page.locator("nav button").filter({ hasText: /新建|创建/ }).first();
-      if ((await createNav.count()) > 0) {
-        await createNav.click();
-        await page.waitForTimeout(500);
-        const nameInput = page.locator('input[type="text"], input:not([type])').first();
-        if ((await nameInput.count()) > 0) {
-          await nameInput.fill(`ci-e2e-${Date.now()}`);
-          report.clicks.push({ label: "fill-create-name", ok: true });
-        }
-        await shot("03-create-env.png");
+      // active class or panel text
+      let panelOk = false;
+      const body = (await page.locator("main, .main, .content, .app").first().innerText().catch(() => "")) ||
+        (await page.locator("body").innerText());
+      if (item.expect.test(body)) panelOk = true;
+      // also check active nav
+      if ((await byTestId.count()) > 0) {
+        const cls = (await byTestId.getAttribute("class")) || "";
+        if (cls.includes("active")) panelOk = true;
+      }
+      if (!panelOk) {
+        // softer: create panel testid
+        if (item.id === "create" && (await page.getByTestId("create-env-panel").count()) > 0) panelOk = true;
+        if (item.id === "profiles" && (await page.getByTestId("profiles-split").count()) > 0) panelOk = true;
+        if (item.id === "settings" && (await page.getByTestId("open-api-panel").count()) > 0) panelOk = true;
+      }
+
+      if (clicked && panelOk) {
+        navOk++;
+        report.clicks.push({ label: item.label, id: item.id, ok: true, panel: true });
+        step(`nav ${item.id}`, { ok: true });
+      } else if (clicked) {
+        // click worked but weak panel match — still count click, mark panel weak
+        navOk++;
+        report.clicks.push({ label: item.label, id: item.id, ok: true, panel: false, note: "weak-panel" });
+        step(`nav ${item.id}`, { ok: true, note: "weak-panel-assert" });
       }
     } catch (e) {
-      report.errors.push(`create-env: ${e}`);
+      report.clicks.push({ label: item.label, id: item.id, ok: false, reason: String(e).slice(0, 160) });
+      fail(`nav click ${item.label}: ${e}`);
     }
   }
+  await shot("02-after-nav.png");
 
-  // API create profile (function, not only UI)
-  if (TOKEN) {
-    const fp = {
-      schema_version: 1,
-      platform: "Win32",
-      user_agent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      language: "en-US",
-      timezone: "UTC",
-    };
-    const r = await api("POST", "/v1/profiles", {
-      name: `ui-e2e-${Date.now()}`,
-      engine_id: "fingerprint-chromium",
-      fingerprint: fp,
-    });
-    report.api.push({ path: "POST /v1/profiles", status: r.status });
-    if (r.status !== 200 && r.status !== 201) {
-      report.errors.push(`create profile → ${r.status}`);
+  if (navOk < NAV.length - 1) {
+    // allow 1 miss only if not strict; strict already failed missing
+    if (navOk < 10) fail(`too few successful navs: ${navOk}/${NAV.length}`);
+  }
+
+  // ── Create environment wizard (form ops) ──
+  const envName = `ci-e2e-${Date.now()}`;
+  try {
+    const navCreate = page.getByTestId("nav-create");
+    if ((await navCreate.count()) > 0) await navCreate.click();
+    else await page.locator("nav button").filter({ hasText: "新建环境" }).first().click();
+    await page.getByTestId("create-env-panel").waitFor({ state: "visible", timeout: 10000 });
+
+    // Step 0: basic
+    const nameInput = page.getByTestId("create-name");
+    await nameInput.waitFor({ state: "visible", timeout: 8000 });
+    await nameInput.fill(envName);
+    const filled = await nameInput.inputValue();
+    if (filled !== envName) fail(`create-name fill mismatch: ${filled}`);
+    report.forms.push({ field: "create-name", value: envName, ok: true });
+
+    // engine select if empty
+    const eng = page.getByTestId("create-engine");
+    if ((await eng.count()) > 0) {
+      const opts = await eng.locator("option").allTextContents();
+      if (opts.length) {
+        // prefer fingerprint-chromium
+        const want = opts.find((o) => /fingerprint-chromium/i.test(o)) || opts[0];
+        await eng.selectOption({ label: want.trim() }).catch(async () => {
+          await eng.selectOption({ index: 0 });
+        });
+        report.forms.push({ field: "create-engine", value: await eng.inputValue(), ok: true });
+      }
+    }
+
+    // Walk wizard: next until submit
+    for (let s = 0; s < 4; s++) {
+      // optional: gen fingerprint on step 2
+      if (s === 2) {
+        const gen = page.getByRole("button", { name: /一键生成|生成.*指纹/ });
+        if ((await gen.count()) > 0) {
+          await gen.first().click();
+          await page.waitForTimeout(400);
+          report.forms.push({ field: "gen-fingerprint", ok: true });
+        }
+        const seed = page.getByTestId("create-seed");
+        if ((await seed.count()) > 0) {
+          const sv = await seed.inputValue();
+          if (!sv || sv.length < 4) {
+            await page.getByTestId("btn-random-seed").click().catch(() => {});
+            await page.waitForTimeout(200);
+          }
+          report.forms.push({ field: "seed", value: await seed.inputValue(), ok: true });
+        }
+      }
+      const next = page.getByTestId("create-next");
+      if ((await next.count()) > 0 && (await next.isVisible())) {
+        await next.click();
+        await page.waitForTimeout(350);
+        report.forms.push({ field: `wizard-next-${s}`, ok: true });
+      }
+    }
+
+    await shot("03-create-wizard.png");
+
+    // Final step submit
+    const submit = page.getByTestId("create-submit");
+    await submit.waitFor({ state: "visible", timeout: 10000 });
+    if (await submit.isDisabled()) {
+      // try click random seed / gen again via going back
+      fail("create-submit disabled — form validation blocked save");
     } else {
-      report.profileId = (r.json?.data || r.json || {}).id || null;
+      await submit.click();
+      await page.waitForTimeout(1500);
+      report.forms.push({ field: "create-submit", ok: true });
     }
+    await shot("04-after-create.png");
+
+    // Expect navigate to profiles or toast
+    const bodyAfter = await page.locator("body").innerText();
+    const listed =
+      bodyAfter.includes(envName) ||
+      (await page.getByText(envName, { exact: false }).count()) > 0;
+
+    // API verify profile exists
+    const list = await api("GET", "/v1/profiles");
+    report.api.push({ path: "GET /v1/profiles after create", status: list.status });
+    let foundApi = false;
+    const arr =
+      list.json?.data ||
+      list.json?.profiles ||
+      (Array.isArray(list.json) ? list.json : []) ||
+      [];
+    if (Array.isArray(arr)) {
+      foundApi = arr.some((p) => (p.name || "").includes(envName) || p.name === envName);
+      report.profileId = (arr.find((p) => (p.name || "").includes(envName)) || {}).id || null;
+      report.profilesCount = arr.length;
+    }
+
+    if (foundApi || listed) {
+      step("create-profile", {
+        ok: true,
+        note: foundApi ? "api" : "ui-list",
+        name: envName,
+        id: report.profileId,
+      });
+      report.forms.push({ field: "create-result", ok: true, api: foundApi, ui: listed });
+    } else {
+      fail(
+        `create profile not found after submit (name=${envName}, apiStatus=${list.status}, count=${report.profilesCount ?? "?"})`
+      );
+    }
+  } catch (e) {
+    fail(`create wizard: ${e}`);
+    await shot("03-create-fail.png");
   }
 
-  // Require at least some successful menu clicks when nav exists
-  const okClicks = report.clicks.filter((c) => c.ok).length;
-  if (hasNav && okClicks < 3) {
-    report.ok = false;
-    report.errors.push(`too-few-menu-clicks: ${okClicks}`);
+  // ── Proxy form (optional function) ──
+  try {
+    const navProxy = page.getByTestId("nav-proxy");
+    if ((await navProxy.count()) > 0) await navProxy.click();
+    else await page.locator("nav button").filter({ hasText: "代理中心" }).first().click();
+    await page.waitForTimeout(400);
+    // API create proxy (more reliable than guessing form)
+    const pname = `ci-proxy-${Date.now()}`;
+    const pr = await api("POST", "/v1/proxies", {
+      name: pname,
+      type: "http",
+      host: "127.0.0.1",
+      port: 18080,
+    });
+    report.api.push({ path: "POST /v1/proxies", status: pr.status });
+    if (pr.status === 200 || pr.status === 201) {
+      step("create-proxy-api", { ok: true, name: pname });
+      // refresh UI
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.getByTestId("nav-proxy").click().catch(() => {});
+      await page.waitForTimeout(500);
+      await shot("05-proxy.png");
+    } else if (pr.status === 401) {
+      step("create-proxy-api", { ok: false, note: "401 need token" });
+      // not hard-fail if profiles create already worked
+    } else {
+      step("create-proxy-api", { ok: false, status: pr.status, body: pr.text });
+    }
+  } catch (e) {
+    step("proxy", { ok: false, note: String(e).slice(0, 120) });
   }
+
+  // ── Hard gates ──
+  const okNav = report.clicks.filter((c) => c.ok).length;
+  const createOk = report.forms.some((f) => f.field === "create-result" && f.ok);
+  if (okNav < 10) fail(`nav ok count ${okNav} < 10`);
+  if (!createOk) fail("create environment form did not complete with API/UI proof");
 
   await browser.close();
   fs.writeFileSync(path.join(OUT, "ui-e2e-report.json"), JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({ ok: report.ok, clicks: okClicks, errors: report.errors }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        ok: report.ok,
+        navOk: okNav,
+        createOk,
+        profileId: report.profileId || null,
+        errors: report.errors,
+      },
+      null,
+      2
+    )
+  );
   if (!report.ok) process.exit(1);
 }
 

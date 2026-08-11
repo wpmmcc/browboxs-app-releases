@@ -1,0 +1,23 @@
+{
+  "node_join_key": "njk-f5e3bf7c-529a-45be-9305-45527ed52d42",
+  "policy": {
+    "require_join": true,
+    "loopback_exempt": true,
+    "require_device_cert": false,
+    "max_login_failures_per_cert": 5,
+    "max_login_failures_per_ip": 20,
+    "ip_failure_window_minutes": 15,
+    "cert_freeze_duration_minutes": 60,
+    "join_ticket_ttl_days": 7,
+    "join_ticket_max_uses": 5,
+    "join_session_ttl_hours": 72,
+    "lan_require_join": true,
+    "public_require_https": true,
+    "require_device_approval": false
+  },
+  "tickets": [],
+  "sessions": [],
+  "revoked_tokens": [],
+  "pending_devices": [],
+  "ip_failures": []
+}

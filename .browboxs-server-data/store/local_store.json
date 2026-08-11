@@ -1,0 +1,20 @@
+{
+  "profiles": [],
+  "workflows": [],
+  "tasks": [],
+  "proxies": [],
+  "accounts": [
+    {
+      "id": "25cb139c-1441-469c-8425-555bfeb63b24",
+      "username": "admin",
+      "password_hash": "e149c8f26f0974a2e87c9e6678e5353e5d668f9178416bb6c808051fdb8a1fca",
+      "role": "admin",
+      "enabled": true,
+      "created_at": "2026-08-11T17:52:11.600636392Z",
+      "permissions": [
+        "*"
+      ]
+    }
+  ],
+  "devices": []
+}
