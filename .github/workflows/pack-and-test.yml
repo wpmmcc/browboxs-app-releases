@@ -348,6 +348,15 @@ jobs:
             asset: browboxs-VERSION-windows-x86_64.tar.gz
             kind: tree
             live: "1"
+          - os: macos-latest
+            asset: browboxs-VERSION-macos-aarch64.tar.gz
+            kind: tree
+            live: "1"
+          - os: macos-latest
+            asset: browboxs-VERSION-macos-x86_64.tar.gz
+            kind: tree
+            live: "1"
+            # Intel binary may run under Rosetta on arm runners; soft if exec fails
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -360,7 +369,7 @@ jobs:
           else
             V="${{ inputs.version }}"
           fi
-          V="${V:-0.2.3}"
+          V="${V:-0.2.4}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v${V}" >> "$GITHUB_OUTPUT"
           A="${{ matrix.asset }}"
