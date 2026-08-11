@@ -369,6 +369,9 @@ if [ "$SKIP_UPDATE" != "1" ] && [ -x "$ROOT/scripts/update-modules.sh" ]; then
   else
     if [ "$uc" -ne 0 ] && grep -qiE 'rate limit|cannot fetch|403|API' "$REPORT_DIR/update-check.log"; then
       warn "update-check network/API issue (runner)"
+    elif grep -qiE 'no platform tree|ERROR: no platform' "$REPORT_DIR/update-check.log"; then
+      # Latest may only publish a subset of platforms during partial matrix tests
+      warn "update-check: no platform tree on latest yet (partial release)"
     else
       soft_bad "update-check failed or wrong asset (see update-check.log)"
     fi

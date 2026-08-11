@@ -177,20 +177,34 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/*.sh
-          STAGE="${RUNNER_TEMP}/bb-smoke-tree"
+          # Git Bash on Windows: RUNNER_TEMP is D:\... which breaks GNU tar -C
+          if [ -n "${RUNNER_TEMP:-}" ] && command -v cygpath >/dev/null 2>&1; then
+            STAGE="$(cygpath -u "$RUNNER_TEMP")/bb-smoke-tree"
+            SMOKE_REP="$(cygpath -u "$RUNNER_TEMP")/smoke-report-tree"
+          else
+            STAGE="${RUNNER_TEMP:-/tmp}/bb-smoke-tree"
+            SMOKE_REP="${RUNNER_TEMP:-/tmp}/smoke-report-tree"
+          fi
+          # Prefer workspace-relative path when temp conversion fails
+          if ! mkdir -p "$STAGE" 2>/dev/null; then
+            STAGE="$PWD/dist/smoke-extract/tree"
+            SMOKE_REP="$PWD/dist/smoke-reports/tree-run"
+            mkdir -p "$STAGE"
+          fi
           rm -rf "$STAGE" && mkdir -p "$STAGE"
-          # Prefer platform tree asset
+          # Prefer platform tree asset (exclude portable-named)
           TAR=$(ls dist/release-assets/browboxs-*-*.tar.gz 2>/dev/null | grep -v portable | head -1 || true)
           if [ -z "$TAR" ]; then
             TAR=$(ls dist/release-assets/browboxs-*.tar.gz 2>/dev/null | head -1 || true)
           fi
           test -n "$TAR"
+          echo "extract $TAR -> $STAGE"
           tar -xzf "$TAR" -C "$STAGE"
-          # layout browboxs/
           if [ -d "$STAGE/browboxs" ]; then ROOT="$STAGE/browboxs"; else ROOT="$STAGE"; fi
-          export BROWBOX_SMOKE_REPORT="${RUNNER_TEMP}/smoke-report-tree"
+          export BROWBOX_SMOKE_REPORT="$SMOKE_REP"
+          mkdir -p "$BROWBOX_SMOKE_REPORT"
+          # Partial matrix: latest may lack this platform — soft-warn via smoke script
           bash scripts/public-runner-product-smoke.sh "$ROOT"
-          # copy report for artifact
           mkdir -p dist/smoke-reports/tree
           cp -a "$BROWBOX_SMOKE_REPORT"/. dist/smoke-reports/tree/ 2>/dev/null || true
 
