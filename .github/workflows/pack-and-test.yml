@@ -215,6 +215,8 @@ jobs:
       needs.pack.result == 'success' &&
       (github.event_name == 'repository_dispatch' || github.event.inputs.publish != 'false')
     steps:
+      - uses: actions/checkout@v4
+
       - name: Meta
         id: meta
         shell: bash
@@ -262,13 +264,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          REPO="${{ github.repository }}"
           TAG="${{ steps.meta.outputs.app_tag }}"
           VER="${{ steps.meta.outputs.version }}"
           NOTES="browboxs ${VER} multi-platform portable installers (private kits + public pack-and-test). Download browboxs-${VER}-<os>-<arch>.tar.gz; verify RELEASE-SHA256SUMS.txt; Linux: tar xzf && bash scripts/install-system.sh. Engines: browboxs-engines-releases."
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Updating release $TAG"
           else
-            gh release create "$TAG" --title "browboxs $VER" --notes "$NOTES"
+            gh release create "$TAG" --repo "$REPO" --title "browboxs $VER" --notes "$NOTES"
           fi
-          gh release upload "$TAG" release-out/* --clobber
-          echo "Published https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+          gh release upload "$TAG" release-out/* --repo "$REPO" --clobber
+          echo "Published https://github.com/${REPO}/releases/tag/${TAG}"
