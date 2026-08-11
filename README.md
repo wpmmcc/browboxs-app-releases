@@ -36,3 +36,21 @@ bash scripts/sync-to-public-releases.sh --all --version 0.1.0
 ## 安装
 
 见 [INSTALL.md](./INSTALL.md)。
+
+## 公开 Runner 测试（找问题）
+
+`pack-and-test` 在 **每平台原生 runner** 上：
+
+1. 下载 **无源码 binary kit**（禁止 kit 内含 `crates/` / `Cargo.toml`）
+2. `pack-kit-to-release` 注入 `update-modules` + own-source manifest → tree/portable/deb…
+3. **`public-runner-product-smoke.sh`**：
+   - 包结构 / 无源码泄露
+   - agent health · 鉴权 401/Bearer
+   - **UI 对应 API 矩阵**（profiles / proxies / workflows / cookies / fingerprint / updates…）
+   - 根路径禁止 SPA 控制台
+   - 更新源 = 本仓 tree；引擎源分离
+   - Linux：portable + deb 各再跑一轮 smoke
+   - 可选 `browboxs-desktop` + xvfb
+
+核心业务只以 **二进制** 参与公开打包；完整源码仅私有 monorepo。
+

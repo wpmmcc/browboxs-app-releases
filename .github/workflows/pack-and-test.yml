@@ -1,4 +1,6 @@
-# Public free-runner pack — one OS×arch cell per job. No cargo core builds.
+# Public free-runner pack + product smoke.
+# Hybrid rule: ONLY consume source-free kits (binaries). Never cargo-build core.
+# Tests: pack integrity · install · update own-source · UI-API matrix · optional desktop.
 name: pack-and-test
 
 on:
@@ -8,22 +10,27 @@ on:
         description: Product version
         required: true
         type: string
-        default: "0.1.0"
+        default: "0.2.2"
       kit_tag:
-        description: Kit prerelease tag
+        description: Kit prerelease tag (binary kits only)
         required: false
         type: string
-        default: "kits-v0.1.0"
+        default: "kits-v0.2.2"
       publish:
-        description: Publish GitHub Release
+        description: Publish GitHub Release assets
         required: false
         type: boolean
         default: true
       allow_partial:
-        description: Allow missing kits
+        description: Allow missing kits (partial matrix)
         required: false
         type: boolean
         default: true
+      require_desktop:
+        description: Fail smoke if browboxs-desktop missing
+        required: false
+        type: boolean
+        default: false
   repository_dispatch:
     types: [kits-ready]
   push:
@@ -45,29 +52,45 @@ jobs:
             platform_key: linux-x86_64
             pack_kinds: tree,deb,portable
             smoke: "1"
+            install_types: "tree,portable,deb"
           - os: ubuntu-24.04-arm
             kit_name: kit-linux-aarch64.tar.gz
             platform_key: linux-aarch64
             pack_kinds: tree,deb,portable
             smoke: "1"
+            install_types: "tree"
           - os: windows-latest
             kit_name: kit-windows-x86_64.tar.gz
             platform_key: windows-x86_64
             pack_kinds: tree,portable
-            smoke: "0"
+            smoke: "1"
+            install_types: "tree"
           - os: macos-latest
             kit_name: kit-darwin-aarch64.tar.gz
             platform_key: macos-aarch64
             pack_kinds: tree
             smoke: "1"
+            install_types: "tree"
           - os: macos-latest
             kit_name: kit-darwin-x86_64.tar.gz
             platform_key: macos-x86_64
             pack_kinds: tree
-            smoke: "0"
+            smoke: "1"
+            install_types: "tree"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Guard — no core source in public pack repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Public repo must never grow monorepo source
+          if [ -d crates ] || [ -f Cargo.toml ] || [ -d apps/desktop/src ]; then
+            echo "ERROR: monorepo source must not exist in app-releases" >&2
+            exit 1
+          fi
+          echo "OK hybrid boundary: pack scripts + kits only"
 
       - name: Meta
         id: meta
@@ -81,13 +104,19 @@ jobs:
             V="${{ inputs.version }}"
             K="${{ inputs.kit_tag }}"
           fi
-          V="${V:-0.1.0}"
+          V="${V:-0.2.2}"
           K="${K:-kits-v${V}}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "kit_tag=$K" >> "$GITHUB_OUTPUT"
           echo "BROWBOX_VERSION=$V" >> "$GITHUB_ENV"
 
-      - name: Download kit
+      - name: Linux smoke deps (xvfb for optional desktop)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb curl ca-certificates unzip || true
+
+      - name: Download binary kit (no source)
         id: dl
         shell: bash
         env:
@@ -97,48 +126,125 @@ jobs:
           TAG="${{ steps.meta.outputs.kit_tag }}"
           NAME="${{ matrix.kit_name }}"
           mkdir -p kits
-          if gh release download "$TAG" -p "$NAME" -p "${NAME}.sha256" -D kits; then
+          if gh release download "$TAG" -R "${{ github.repository }}" -p "$NAME" -p "${NAME}.sha256" -D kits; then
             echo "present=true" >> "$GITHUB_OUTPUT"
             ls -lah kits/
+            # kit must not contain source
+            tar -tzf "kits/$NAME" | head -40 > kits/listing.txt
+            if grep -E '(^|/)(crates/|Cargo.toml|apps/desktop/src/)' kits/listing.txt; then
+              echo "ERROR: kit contains source paths" >&2
+              exit 1
+            fi
+            echo "OK kit is binary/layout only"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.allow_partial }}" != "true" ]; then
               exit 1
             fi
-            echo "WARN missing kit $NAME"
+            echo "WARN missing kit $NAME on $TAG"
           fi
 
-      - name: Pack
+      - name: Pack (inject update scripts + own-source manifest)
         if: steps.dl.outputs.present == 'true'
         shell: bash
         env:
           BROWBOX_VERSION: ${{ steps.meta.outputs.version }}
           KIT: kits/${{ matrix.kit_name }}
           OUT_DIR: dist/release-assets
-          RUN_SMOKE: ${{ matrix.smoke }}
-          ALLOW_MISSING_DESKTOP: "1"
+          RUN_SMOKE: "0"
+          ALLOW_MISSING_DESKTOP: ${{ inputs.require_desktop == true && '0' || '1' }}
           BROWBOX_PACK_KINDS: ${{ matrix.pack_kinds }}
         run: |
           set -euo pipefail
           chmod +x scripts/*.sh || true
           test -x scripts/pack-kit-to-release.sh
-          bash scripts/pack-kit-to-release.sh --kit "$KIT" --version "$BROWBOX_VERSION"
-          echo "platform=${{ matrix.platform_key }}" > "dist/release-assets/CELL-${{ matrix.platform_key }}.txt"
-          echo "kinds=${{ matrix.pack_kinds }}" >> "dist/release-assets/CELL-${{ matrix.platform_key }}.txt"
+          bash scripts/pack-kit-to-release.sh --kit "$KIT" --version "$BROWBOX_VERSION" --no-smoke
+          {
+            echo "platform=${{ matrix.platform_key }}"
+            echo "kinds=${{ matrix.pack_kinds }}"
+            echo "kit_tag=${{ steps.meta.outputs.kit_tag }}"
+            echo "hybrid=binary-kit-only"
+          } > "dist/release-assets/CELL-${{ matrix.platform_key }}.txt"
           ls -lah dist/release-assets/
+
+      - name: Product smoke — tree install + UI-API + update source
+        if: steps.dl.outputs.present == 'true' && matrix.smoke == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BROWBOX_SMOKE_REQUIRE_DESKTOP: ${{ inputs.require_desktop == true && '1' || '0' }}
+          BROWBOX_SMOKE_PORT: "18971"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          STAGE="${RUNNER_TEMP}/bb-smoke-tree"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          # Prefer platform tree asset
+          TAR=$(ls dist/release-assets/browboxs-*-*.tar.gz 2>/dev/null | grep -v portable | head -1 || true)
+          if [ -z "$TAR" ]; then
+            TAR=$(ls dist/release-assets/browboxs-*.tar.gz 2>/dev/null | head -1 || true)
+          fi
+          test -n "$TAR"
+          tar -xzf "$TAR" -C "$STAGE"
+          # layout browboxs/
+          if [ -d "$STAGE/browboxs" ]; then ROOT="$STAGE/browboxs"; else ROOT="$STAGE"; fi
+          export BROWBOX_SMOKE_REPORT="${RUNNER_TEMP}/smoke-report-tree"
+          bash scripts/public-runner-product-smoke.sh "$ROOT"
+          # copy report for artifact
+          mkdir -p dist/smoke-reports/tree
+          cp -a "$BROWBOX_SMOKE_REPORT"/. dist/smoke-reports/tree/ 2>/dev/null || true
+
+      - name: Product smoke — portable + deb install types (Linux)
+        if: steps.dl.outputs.present == 'true' && runner.os == 'Linux' && contains(matrix.install_types, 'portable')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BROWBOX_SMOKE_REQUIRE_DESKTOP: "0"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          fail=0
+          # portable
+          ZIP=$(ls dist/release-assets/*-portable.zip 2>/dev/null | head -1 || true)
+          if [ -n "$ZIP" ]; then
+            P="${RUNNER_TEMP}/bb-portable"
+            rm -rf "$P" && mkdir -p "$P"
+            unzip -q "$ZIP" -d "$P"
+            R="$P/browboxs"
+            [ -d "$R" ] || R="$P"
+            export BROWBOX_SMOKE_PORT=18972 BROWBOX_SMOKE_REPORT="${RUNNER_TEMP}/smoke-portable"
+            bash scripts/public-runner-product-smoke.sh "$R" || fail=1
+            mkdir -p dist/smoke-reports/portable
+            cp -a "$BROWBOX_SMOKE_REPORT"/. dist/smoke-reports/portable/ 2>/dev/null || true
+          fi
+          # deb extract (no root install)
+          DEB=$(ls dist/release-assets/*.deb 2>/dev/null | head -1 || true)
+          if [ -n "$DEB" ] && command -v dpkg-deb >/dev/null 2>&1; then
+            D="${RUNNER_TEMP}/bb-deb"
+            rm -rf "$D" && mkdir -p "$D"
+            dpkg-deb -x "$DEB" "$D"
+            R="$D/opt/browboxs"
+            export BROWBOX_SMOKE_PORT=18973 BROWBOX_SMOKE_REPORT="${RUNNER_TEMP}/smoke-deb"
+            bash scripts/public-runner-product-smoke.sh "$R" || fail=1
+            mkdir -p dist/smoke-reports/deb
+            cp -a "$BROWBOX_SMOKE_REPORT"/. dist/smoke-reports/deb/ 2>/dev/null || true
+          fi
+          exit $fail
 
       - uses: actions/upload-artifact@v4
         if: steps.dl.outputs.present == 'true'
         with:
           name: release-${{ matrix.platform_key }}
-          path: dist/release-assets/*
+          path: |
+            dist/release-assets/*
+            dist/smoke-reports/**
           if-no-files-found: error
           retention-days: 14
 
   publish:
     needs: pack
     runs-on: ubuntu-22.04
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || inputs.publish == true || github.event_name == 'repository_dispatch')
     steps:
       - uses: actions/checkout@v4
       - name: Meta
@@ -150,7 +256,7 @@ jobs:
           else
             V="${{ inputs.version }}"
           fi
-          V="${V:-0.1.0}"
+          V="${V:-0.2.2}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v${V}" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
@@ -188,7 +294,7 @@ jobs:
             done
           ) > out/RELEASE-SHA256SUMS.txt
           TAG="${{ steps.meta.outputs.tag }}"
-          NOTES="browboxs ${{ steps.meta.outputs.version }} multi-platform packages (from source-free kits). See INSTALL.md. Entry: browboxs-desktop."
+          NOTES="browboxs ${{ steps.meta.outputs.version }} — multi-platform **binary packages** from source-free kits (no monorepo source). Public runners pack + product smoke (install / update own-source / UI-API matrix). Entry: browboxs-desktop. See INSTALL.md."
           mapfile -t FILES < <(find out -type f | sort)
           echo "uploading ${#FILES[@]} files:"
           printf '  %s\n' "${FILES[@]}"
@@ -198,3 +304,32 @@ jobs:
             gh release create "$TAG" "${FILES[@]}" --title "browboxs ${{ steps.meta.outputs.version }}" --notes "$NOTES"
           fi
           echo "published $TAG"
+
+  smoke-summary:
+    needs: [pack, publish]
+    runs-on: ubuntu-22.04
+    if: always()
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: _all
+          pattern: release-*
+          merge-multiple: true
+        continue-on-error: true
+      - name: Aggregate smoke reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "## Public runner product smoke summary"
+          echo
+          find _all -name 'summary.txt' 2>/dev/null | while read -r f; do
+            echo "### $f"
+            cat "$f"
+            echo
+          done || true
+          # count fails
+          fails=$(grep -rh '^FAIL' _all 2>/dev/null | wc -l || echo 0)
+          echo "total FAIL lines: $fails"
+          if [ "${fails:-0}" -gt 0 ]; then
+            echo "::warning::Some product-smoke FAIL lines present — inspect smoke-reports artifacts"
+          fi
