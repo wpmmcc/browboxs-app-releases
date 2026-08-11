@@ -152,11 +152,11 @@ jobs:
             echo "SKIP exec smoke for cross arch"
             exit 0
           fi
-          # Use workspace paths (Windows Git Bash cannot tar into D:\a\_temp with backslashes)
-          ROOT="$GITHUB_WORKSPACE/_smoke_install"
-          DATA="$GITHUB_WORKSPACE/_smoke_agent_data"
-          HEALTH="$GITHUB_WORKSPACE/_smoke_health.json"
-          rm -rf "$ROOT" "$DATA"
+          # Relative paths only — Windows Git Bash breaks on D:\... workspace absolute paths
+          ROOT="_smoke_install"
+          DATA="_smoke_agent_data"
+          HEALTH="_smoke_health.json"
+          rm -rf "$ROOT" "$DATA" "$HEALTH"
           mkdir -p "$ROOT" "$DATA"
           tar -xzf "out/browboxs-${VER}-${OS}-${ARCH}.tar.gz" -C "$ROOT"
           STAGE="$ROOT/browboxs"
