@@ -43,7 +43,7 @@ jobs:
           - os: ubuntu-22.04
             kit_name: kit-linux-x86_64.tar.gz
             platform_key: linux-x86_64
-            pack_kinds: tree,deb,appimage,portable
+            pack_kinds: tree,deb,portable
             smoke: "1"
           - os: ubuntu-24.04-arm
             kit_name: kit-linux-aarch64.tar.gz
@@ -166,28 +166,35 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          find _all -type f \( -name 'browboxs-*' -o -name 'RELEASE-SHA256SUMS.txt' -o -name 'CELL-*.txt' \) \
+          find _all -type f \( -name 'browboxs-*' -o -name 'RELEASE-SHA256SUMS.txt' -o -name 'CELL-*.txt' -o -name 'INSTALL.md' \) \
             -exec cp -f {} out/ \; 2>/dev/null || true
-          [ -f INSTALL.md ] && cp -f INSTALL.md out/ || true
-          n=$(find out -name 'browboxs-*.tar.gz' -o -name 'browboxs-*.zip' 2>/dev/null | wc -l)
+          if [ -f INSTALL.md ]; then cp -f INSTALL.md out/; fi
+          n=$(find out -type f \( -name 'browboxs-*.tar.gz' -o -name 'browboxs-*.zip' -o -name 'browboxs-*.deb' \) | wc -l)
           echo "assets_n=$n"
-          test "$n" -ge 1 || { echo "no assets"; exit 0; }
-          {
-            echo "# browboxs ${{ steps.meta.outputs.version }}"
+          ls -lah out/ || true
+          if [ "$n" -lt 1 ]; then
+            echo "no assets to publish"
+            exit 0
+          fi
+          (
             cd out
+            echo "# browboxs ${{ steps.meta.outputs.version }}"
             for f in browboxs-*; do
               [ -f "$f" ] || continue
-              [[ "$f" == *.sha256 ]] && continue
+              case "$f" in *.sha256) continue ;; esac
               if [ -f "${f}.sha256" ]; then cat "${f}.sha256"
               else sha256sum "$f"
               fi
             done
-          } > out/RELEASE-SHA256SUMS.txt
+          ) > out/RELEASE-SHA256SUMS.txt
           TAG="${{ steps.meta.outputs.tag }}"
           NOTES="browboxs ${{ steps.meta.outputs.version }} multi-platform packages (from source-free kits). See INSTALL.md. Entry: browboxs-desktop."
+          mapfile -t FILES < <(find out -type f | sort)
+          echo "uploading ${#FILES[@]} files:"
+          printf '  %s\n' "${FILES[@]}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" out/* --clobber
+            gh release upload "$TAG" "${FILES[@]}" --clobber
           else
-            gh release create "$TAG" out/* --title "browboxs ${{ steps.meta.outputs.version }}" --notes "$NOTES"
+            gh release create "$TAG" "${FILES[@]}" --title "browboxs ${{ steps.meta.outputs.version }}" --notes "$NOTES"
           fi
           echo "published $TAG"
