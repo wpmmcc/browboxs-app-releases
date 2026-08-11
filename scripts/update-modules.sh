@@ -189,26 +189,41 @@ if [ -x "$ROOT/bin/browboxs-agent" ] || [ -f "$ROOT/bin/browboxs-agent" ]; then
 fi
 
 echo "    extract → $ROOT"
-# Package layout: top-level browboxs/
-if tar tzf "$TMP/$ASSET" | head -1 | grep -q '^browboxs/'; then
+# Package layout: top-level browboxs/  (avoid tar|head SIGPIPE under pipefail)
+FIRST_ENTRY=$(tar tzf "$TMP/$ASSET" 2>/dev/null | head -1 || true)
+if [[ "$FIRST_ENTRY" == browboxs/ ]] || [[ "$FIRST_ENTRY" == browboxs/* ]]; then
   tar -xzf "$TMP/$ASSET" -C "$ROOT" --strip-components=1
 else
   tar -xzf "$TMP/$ASSET" -C "$ROOT"
 fi
+# If a previous broken apply left a nested browboxs/, promote it once
+if [ ! -x "$ROOT/bin/browboxs-agent" ] && [ -x "$ROOT/browboxs/bin/browboxs-agent" ]; then
+  echo "    promote nested browboxs/ → install root"
+  tar -C "$ROOT/browboxs" -cf - . | tar -C "$ROOT" -xf -
+  rm -rf "$ROOT/browboxs"
+fi
 
-# Ensure update script self-source remains this repo
+# Ensure update script self-source remains this repo; stamp product_version from modules/VERSION
 if [ -f "$ROOT/modules/manifest.json" ]; then
-  python3 - "$ROOT/modules/manifest.json" "$APP_REPO" <<'PY'
-import json,sys
-path, repo = sys.argv[1], sys.argv[2]
+  python3 - "$ROOT/modules/manifest.json" "$APP_REPO" "${ROOT}/modules/VERSION" <<'PY'
+import json,sys,os
+path, repo, ver_file = sys.argv[1], sys.argv[2], sys.argv[3]
 owner, name = repo.split("/",1)
 m=json.load(open(path))
 m.setdefault("github",{})
 m["github"]["owner"]=owner
 m["github"]["repo"]=name
 m["github"]["api"]="https://api.github.com/repos/{owner}/{repo}/releases/latest"
+m.setdefault("github_app",{})
+m["github_app"]["owner"]=owner
+m["github_app"]["repo"]=name
+m["github_app"]["api"]=m["github"]["api"]
+if os.path.isfile(ver_file):
+    ver=open(ver_file).read().strip()
+    if ver:
+        m["product_version"]=ver
 open(path,"w").write(json.dumps(m,indent=2)+"\n")
-print("    pinned manifest github →", repo)
+print("    pinned manifest github →", repo, "product_version=", m.get("product_version"))
 PY
 fi
 
