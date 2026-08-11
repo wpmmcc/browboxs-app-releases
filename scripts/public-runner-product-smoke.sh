@@ -342,22 +342,11 @@ if [ "$SKIP_LIVE" = "0" ] && [ -n "$TOKEN" ]; then
   # Updates panel
   c=$(api GET /v1/updates/check)
   case "$c" in
-    200) ok "UI-API updates/check"
-      # ensure app vs engines split if body has channels
-      if python3 - "$REPORT_DIR/api-__v1_updates_check.json" <<'PY' 2>/dev/null; then
-import json,sys
-p=sys.argv[1]
-try:
-  d=json.load(open(p))
-except Exception:
-  sys.exit(0)
-s=json.dumps(d)
-# soft assertions
-if "engines" in s.lower() or "app" in s.lower() or "github" in s.lower():
-  print("channel_info_present")
-sys.exit(0)
-PY
-      then ok "updates/check body readable"; fi
+    200)
+      ok "UI-API updates/check"
+      if [ -f "$REPORT_DIR/api-__v1_updates_check.json" ]; then
+        ok "updates/check body readable"
+      fi
       ;;
     404) warn "updates/check 404" ;;
     *) soft_bad "updates/check → $c" ;;
