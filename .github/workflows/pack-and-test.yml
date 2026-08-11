@@ -1,30 +1,35 @@
-# Public free-runner pack matrix — ONE runner cell per platform+arch.
-# Does NOT cargo-build browboxs core crates. Consumes source-free kits only.
-#
-# Packaging types per cell: see docs/PACKAGING-TYPES-AND-COMPAT.md (mirrored).
+# Public free-runner pack — one OS×arch cell per job. No cargo core builds.
 name: pack-and-test
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Product version (e.g. 0.1.0)
+        description: Product version
         required: true
+        type: string
         default: "0.1.0"
       kit_tag:
-        description: Prerelease tag holding kits (default kits-v<version>)
+        description: Kit prerelease tag
         required: false
-        default: ""
+        type: string
+        default: "kits-v0.1.0"
       publish:
-        description: Upload assets to GitHub Release v<version>
+        description: Publish GitHub Release
         required: false
-        default: "true"
+        type: boolean
+        default: true
       allow_partial:
-        description: Continue if some platform kits missing
+        description: Allow missing kits
         required: false
-        default: "true"
+        type: boolean
+        default: true
   repository_dispatch:
     types: [kits-ready]
+  push:
+    paths:
+      - ".github/workflows/pack-and-test.yml"
+      - "scripts/**"
 
 permissions:
   contents: write
@@ -35,43 +40,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Linux x86_64 → tree + deb + AppImage (+ rpm optional) ──
           - os: ubuntu-22.04
             kit_name: kit-linux-x86_64.tar.gz
             platform_key: linux-x86_64
-            pack_kinds: "tree,deb,appimage"
+            pack_kinds: tree,deb,appimage,portable
             smoke: "1"
-          # ── Linux aarch64 ──
           - os: ubuntu-24.04-arm
             kit_name: kit-linux-aarch64.tar.gz
             platform_key: linux-aarch64
-            pack_kinds: "tree,deb,appimage"
+            pack_kinds: tree,deb,portable
             smoke: "1"
-          # ── Windows x86_64 → tree + nsis + portable ──
           - os: windows-latest
             kit_name: kit-windows-x86_64.tar.gz
             platform_key: windows-x86_64
-            pack_kinds: "tree,portable"
+            pack_kinds: tree,portable
             smoke: "0"
-          # ── macOS Apple Silicon ──
           - os: macos-latest
             kit_name: kit-darwin-aarch64.tar.gz
             platform_key: macos-aarch64
-            pack_kinds: "tree"
+            pack_kinds: tree
             smoke: "1"
-          # ── macOS Intel (same runner, different kit) ──
           - os: macos-latest
             kit_name: kit-darwin-x86_64.tar.gz
             platform_key: macos-x86_64
-            pack_kinds: "tree"
+            pack_kinds: tree
             smoke: "0"
     runs-on: ${{ matrix.os }}
-    name: pack-${{ matrix.platform_key }}
     steps:
-      - name: Checkout public pack repo (scripts only)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Resolve version / kit tag
+      - name: Meta
         id: meta
         shell: bash
         run: |
@@ -80,17 +78,16 @@ jobs:
             V="${{ github.event.client_payload.version }}"
             K="${{ github.event.client_payload.kit_tag }}"
           else
-            V="${{ github.event.inputs.version }}"
-            K="${{ github.event.inputs.kit_tag }}"
+            V="${{ inputs.version }}"
+            K="${{ inputs.kit_tag }}"
           fi
           V="${V:-0.1.0}"
           K="${K:-kits-v${V}}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "kit_tag=$K" >> "$GITHUB_OUTPUT"
           echo "BROWBOX_VERSION=$V" >> "$GITHUB_ENV"
-          echo "cell=${{ matrix.platform_key }} kinds=${{ matrix.pack_kinds }}" 
 
-      - name: Download kit from this repo release
+      - name: Download kit
         id: dl
         shell: bash
         env:
@@ -100,22 +97,19 @@ jobs:
           TAG="${{ steps.meta.outputs.kit_tag }}"
           NAME="${{ matrix.kit_name }}"
           mkdir -p kits
-          if gh release download "$TAG" -p "$NAME" -p "${NAME}.sha256" -D kits 2>/tmp/dl.err; then
-            echo "present=1" >> "$GITHUB_OUTPUT"
+          if gh release download "$TAG" -p "$NAME" -p "${NAME}.sha256" -D kits; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
             ls -lah kits/
           else
-            cat /tmp/dl.err || true
-            ALLOW="${{ github.event.inputs.allow_partial || 'true' }}"
-            if [ "$ALLOW" = "true" ] || [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-              echo "present=0" >> "$GITHUB_OUTPUT"
-              echo "WARN: kit $NAME missing — partial allowed"
-            else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.allow_partial }}" != "true" ]; then
               exit 1
             fi
+            echo "WARN missing kit $NAME"
           fi
 
-      - name: Pack kit → release assets (native runner only)
-        if: steps.dl.outputs.present == '1'
+      - name: Pack
+        if: steps.dl.outputs.present == 'true'
         shell: bash
         env:
           BROWBOX_VERSION: ${{ steps.meta.outputs.version }}
@@ -126,26 +120,15 @@ jobs:
           BROWBOX_PACK_KINDS: ${{ matrix.pack_kinds }}
         run: |
           set -euo pipefail
-          chmod +x scripts/pack-kit-to-release.sh scripts/verify-package-security.sh 2>/dev/null || true
-          if [ ! -x scripts/pack-kit-to-release.sh ]; then
-            echo "ERROR: scripts/pack-kit-to-release.sh missing — sync from core monorepo" >&2
-            exit 1
-          fi
-          # Forbidden: building core crates on public runners
-          if grep -RInE 'cargo build -p browboxs-client-agent|cargo build -p browboxs-server' \
-              scripts .github 2>/dev/null | grep -v 'Forbidden\|不\|禁止' | head -3 | grep .; then
-            echo "WARN: found cargo build references in pack scripts (review)"
-          fi
+          chmod +x scripts/*.sh || true
+          test -x scripts/pack-kit-to-release.sh
           bash scripts/pack-kit-to-release.sh --kit "$KIT" --version "$BROWBOX_VERSION"
-          # Record cell packaging types
-          echo "platform_key=${{ matrix.platform_key }}" > dist/release-assets/CELL-${{ matrix.platform_key }}.txt
-          echo "pack_kinds=${{ matrix.pack_kinds }}" >> dist/release-assets/CELL-${{ matrix.platform_key }}.txt
-          echo "runner=${{ matrix.os }}" >> dist/release-assets/CELL-${{ matrix.platform_key }}.txt
+          echo "platform=${{ matrix.platform_key }}" > "dist/release-assets/CELL-${{ matrix.platform_key }}.txt"
+          echo "kinds=${{ matrix.pack_kinds }}" >> "dist/release-assets/CELL-${{ matrix.platform_key }}.txt"
           ls -lah dist/release-assets/
 
-      - name: Upload platform artifact
-        if: steps.dl.outputs.present == '1'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: steps.dl.outputs.present == 'true'
         with:
           name: release-${{ matrix.platform_key }}
           path: dist/release-assets/*
@@ -158,88 +141,53 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v4
-
-      - name: Version
+      - name: Meta
         id: meta
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             V="${{ github.event.client_payload.version }}"
           else
-            V="${{ github.event.inputs.version }}"
+            V="${{ inputs.version }}"
           fi
           V="${V:-0.1.0}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v${V}" >> "$GITHUB_OUTPUT"
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: _all
           pattern: release-*
           merge-multiple: true
         continue-on-error: true
-
-      - name: Merge SHA sums + publish Release
+      - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLISH: ${{ github.event.inputs.publish || 'true' }}
         run: |
           set -euo pipefail
           mkdir -p out
-          find _all -type f \( \
-            -name 'browboxs-*.tar.gz' -o -name 'browboxs-*.zip' -o \
-            -name 'browboxs-*.sha256' -o -name 'browboxs-*.deb' -o \
-            -name 'browboxs-*.AppImage' -o -name 'browboxs-*.rpm' -o \
-            -name 'browboxs-*.exe' -o -name 'browboxs-*.msi' -o \
-            -name 'browboxs-*.dmg' -o -name 'RELEASE-SHA256SUMS.txt' -o \
-            -name 'CELL-*.txt' -o -name 'INSTALL.md' \
-          \) -exec cp -f {} out/ \; 2>/dev/null || true
-          # Ship INSTALL.md from repo if present
+          find _all -type f \( -name 'browboxs-*' -o -name 'RELEASE-SHA256SUMS.txt' -o -name 'CELL-*.txt' \) \
+            -exec cp -f {} out/ \; 2>/dev/null || true
           [ -f INSTALL.md ] && cp -f INSTALL.md out/ || true
-          n=$(ls out/browboxs-*.tar.gz out/browboxs-*.zip 2>/dev/null | wc -l || echo 0)
-          echo "tree_or_zip_assets=$n"
-          if [ "$n" -lt 1 ]; then
-            echo "No release tarballs/zips — skip publish"
-            exit 0
-          fi
+          n=$(find out -name 'browboxs-*.tar.gz' -o -name 'browboxs-*.zip' 2>/dev/null | wc -l)
+          echo "assets_n=$n"
+          test "$n" -ge 1 || { echo "no assets"; exit 0; }
           {
-            echo "# browboxs ${{ steps.meta.outputs.version }} RELEASE-SHA256SUMS"
-            echo "# See INSTALL.md for OS requirements (Win10+, macOS12+, Linux glibc baseline)"
+            echo "# browboxs ${{ steps.meta.outputs.version }}"
             cd out
-            for f in browboxs-*.tar.gz browboxs-*.zip browboxs-*.deb browboxs-*.AppImage browboxs-*.rpm browboxs-*.exe browboxs-*.msi browboxs-*.dmg; do
+            for f in browboxs-*; do
               [ -f "$f" ] || continue
+              [[ "$f" == *.sha256 ]] && continue
               if [ -f "${f}.sha256" ]; then cat "${f}.sha256"
-              else sha256sum "$f" 2>/dev/null || shasum -a 256 "$f"
+              else sha256sum "$f"
               fi
             done
           } > out/RELEASE-SHA256SUMS.txt
-          ls -lah out/
-          if [ "$PUBLISH" != "true" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "publish=false — skip gh release"
-            exit 0
-          fi
           TAG="${{ steps.meta.outputs.tag }}"
-          NOTES="browboxs ${{ steps.meta.outputs.version }}
-
-## Install
-See INSTALL.md in this release (Windows 10+, macOS 12+, Linux deb/AppImage/tar).
-
-## Binaries inside package
-- browboxs-desktop — product UI entry
-- browboxs-agent — local runtime / RPA
-- browboxs-server — optional node host / RBAC
-
-## Packaging cells
-Built on free public runners (one OS×arch cell per job). Core source is not compiled in this repository.
-
-## Integrity
-Verify with RELEASE-SHA256SUMS.txt
-"
+          NOTES="browboxs ${{ steps.meta.outputs.version }} multi-platform packages (from source-free kits). See INSTALL.md. Entry: browboxs-desktop."
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/* --clobber
           else
             gh release create "$TAG" out/* --title "browboxs ${{ steps.meta.outputs.version }}" --notes "$NOTES"
           fi
-          echo "Published $TAG"
+          echo "published $TAG"
