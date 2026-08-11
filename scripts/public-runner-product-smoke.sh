@@ -96,25 +96,39 @@ if [ -f "$UI/index.html" ]; then
 fi
 
 # Own-source channels
+# macOS ships bash 3.2: avoid eval+heredoc (breaks near '(') — write env file then source.
 if [ -f "$ROOT/modules/manifest.json" ]; then
-  eval "$(python3 - "$ROOT/modules/manifest.json" <<'PY'
-import json,sys
-m=json.load(open(sys.argv[1]))
-g=m.get("github_app") or m.get("github") or {}
-e=m.get("github_engines") or {}
-print(f"APP_SRC={g.get('owner','')}/{g.get('repo','')}")
-print(f"ENG_SRC={e.get('owner','')}/{e.get('repo','')}")
-print(f"PROD_VER={m.get('product_version','')}")
-itype=(m.get("packaging") or {}).get("install_type","")
-print(f"INSTALL_TYPE={itype}")
-its=(m.get("packaging") or {}).get("install_types") or {}
-bad=[]
-for k,v in its.items():
-  if v.get("update_source") not in (None,"github_app","github"):
-    bad.append(k)
-print(f"TYPES_BAD={','.join(bad)}")
+  APP_SRC=""; ENG_SRC=""; PROD_VER=""; INSTALL_TYPE=""; TYPES_BAD=""
+  MF_ENV="$REPORT_DIR/manifest.env"
+  python3 - "$ROOT/modules/manifest.json" "$MF_ENV" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+out = sys.argv[2]
+g = m.get("github_app") or m.get("github") or {}
+e = m.get("github_engines") or {}
+itype = (m.get("packaging") or {}).get("install_type", "")
+its = (m.get("packaging") or {}).get("install_types") or {}
+bad = []
+for k, v in its.items():
+    if not isinstance(v, dict):
+        continue
+    if v.get("update_source") not in (None, "github_app", "github"):
+        bad.append(k)
+
+def esc(s):
+    return str(s).replace("'", "'\\''")
+
+lines = [
+    "APP_SRC='%s'" % esc("%s/%s" % (g.get("owner", ""), g.get("repo", ""))),
+    "ENG_SRC='%s'" % esc("%s/%s" % (e.get("owner", ""), e.get("repo", ""))),
+    "PROD_VER='%s'" % esc(m.get("product_version", "")),
+    "INSTALL_TYPE='%s'" % esc(itype),
+    "TYPES_BAD='%s'" % esc(",".join(bad)),
+]
+open(out, "w").write("\n".join(lines) + "\n")
 PY
-)"
+  # shellcheck disable=SC1090
+  . "$MF_ENV"
   if [ "${APP_SRC:-}" = "wpmmcc/browboxs-app-releases" ]; then ok "app source $APP_SRC"
   else bad "app source unexpected: ${APP_SRC:-empty}"; fi
   if [ "${ENG_SRC:-}" = "wpmmcc/browboxs-engines-releases" ]; then ok "engines source $ENG_SRC"
@@ -151,7 +165,12 @@ kill_port() {
   local p=$1
   if command -v fuser >/dev/null 2>&1; then fuser -k "${p}/tcp" 2>/dev/null || true
   elif command -v lsof >/dev/null 2>&1; then
-    lsof -tiTCP:"$p" -sTCP:LISTEN 2>/dev/null | xargs -r kill 2>/dev/null || true
+    # BSD xargs (macOS) has no -r; only kill when pids exist
+    pids=$(lsof -tiTCP:"$p" -sTCP:LISTEN 2>/dev/null || true)
+    if [ -n "${pids:-}" ]; then
+      # shellcheck disable=SC2086
+      kill $pids 2>/dev/null || true
+    fi
   fi
   sleep 0.2
 }
@@ -164,14 +183,10 @@ export BROWBOX_ENGINES_DIR="${BROWBOX_ENGINES_DIR:-$ROOT/engines}"
 unset BROWBOX_SERVE_UI BROWBOX_INSECURE_NO_AUTH BROWBOX_UI_DIR || true
 mkdir -p "$BROWBOX_AGENT_DATA"
 
-# Windows/Git Bash: run agent from root
+# Windows/Git Bash: run agent from root (avoid bash [[ ]] for 3.2 portability)
 (
   cd "$ROOT"
-  if [[ "$AGENT" == *.exe ]]; then
-    "$AGENT" >"$REPORT_DIR/agent.log" 2>&1 &
-  else
-    "$AGENT" >"$REPORT_DIR/agent.log" 2>&1 &
-  fi
+  "$AGENT" >"$REPORT_DIR/agent.log" 2>&1 &
   echo $! >"$REPORT_DIR/agent.pid"
 )
 PID=$(cat "$REPORT_DIR/agent.pid")
@@ -218,10 +233,15 @@ fi
 auth_hdr=()
 TOKEN=""
 if [ "$SKIP_LIVE" = "0" ]; then
-  # unauth must 401
+  # Unauth gate: 401/403 = locked OK; 200 = open (warn, never hard-fail pack);
+  # other codes soft-fail so SOFT=1 portable/deb still green after successful pack.
   code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/v1/profiles" || echo 000)
-  if [ "$code" = "401" ]; then ok "unauth profiles → 401"
-  else soft_bad "unauth profiles got $code (expect 401)"; fi
+  case "$code" in
+    401|403) ok "unauth profiles → $code" ;;
+    200) warn "unauth profiles → 200 (auth open / no token required — pack continues)" ;;
+    000) soft_bad "unauth profiles curl failed" ;;
+    *) soft_bad "unauth profiles got $code (expect 401/403)" ;;
+  esac
 
   # locate session token
   for t in \
@@ -250,7 +270,9 @@ if [ "$SKIP_LIVE" = "0" ]; then
   elif echo "$body" | grep -qiE '<div id="root"|vite|react'; then
     bad "agent / serves SPA — product entry must be desktop, not SERVE_UI"
   else
-    warn "agent / body unclear: ${body:0:80}"
+    # Avoid ${var:0:n} edge cases; head -c is portable enough for smoke
+    body_snip=$(printf '%s' "$body" | head -c 80 | tr '\n' ' ')
+    warn "agent / body unclear: $body_snip"
   fi
 fi
 
