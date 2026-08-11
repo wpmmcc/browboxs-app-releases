@@ -1,0 +1,10 @@
+{
+  "name": "browboxs-public-ui-e2e",
+  "private": true,
+  "version": "0.2.5",
+  "description": "Headed workbench UI e2e for public free runners (no monorepo)",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}

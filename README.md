@@ -10,7 +10,9 @@
 | `INSTALL.md` | 按 OS 安装说明与系统要求（Clash Verge 风格） |
 | `scripts/pack-kit-to-release.sh` | kit → 用户资产（**不**编译核心源码） |
 | `scripts/public-runner-product-smoke.sh` | 包结构 + API + 更新源 |
-| `scripts/public-runner-ui-function-smoke.sh` | **S3** 安装后 UI/功能门禁（薄封装） |
+| `scripts/public-runner-ui-function-smoke.sh` | **S3a** 安装后 UI-API 功能门禁 |
+| `scripts/public-runner-desktop-ui-e2e.sh` | **S3b** Playwright **有头**侧栏点击 + 可选 desktop xvfb |
+| `scripts/ui-e2e/` | Playwright workbench e2e（无 monorepo） |
 | `.github/workflows/pack-and-test.yml` | S1 pack → publish → S2 install → S3 UI |
 
 ## 禁止
@@ -22,11 +24,12 @@
 ## MAIN 流程
 
 ```text
-本机 host-cross-kits（私有 Actions 已关） → kits-v* → 公开 pack-and-test (main)
+私有 prepare-kits (main) → kits-v* → 公开 pack-and-test (main)
   → pack + product-smoke
   → publish v*
   → install-from-release
-  → ui-function smoke
+  → S3a UI-API smoke
+  → S3b headed Playwright UI e2e
 ```
 
 ```bash
