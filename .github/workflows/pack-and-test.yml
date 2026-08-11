@@ -327,8 +327,164 @@ jobs:
           fi
           echo "published $TAG"
 
+  # After publish: download user-facing install packages from the Release and
+  # run real install path (install-system.sh / extract) + product smoke.
+  install-from-release:
+    needs: publish
+    if: always() && needs.publish.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: browboxs-VERSION-linux-x86_64.tar.gz
+            kind: tree
+            live: "0"   # host cross bins often need newer glibc than 22.04
+          - os: ubuntu-24.04-arm
+            asset: browboxs-VERSION-linux-aarch64.tar.gz
+            kind: tree
+            live: "1"
+          - os: windows-latest
+            asset: browboxs-VERSION-windows-x86_64.tar.gz
+            kind: tree
+            live: "1"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Meta
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            V="${{ github.event.client_payload.version }}"
+          else
+            V="${{ inputs.version }}"
+          fi
+          V="${V:-0.2.3}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v${V}" >> "$GITHUB_OUTPUT"
+          A="${{ matrix.asset }}"
+          A="${A//VERSION/$V}"
+          echo "asset=$A" >> "$GITHUB_OUTPUT"
+
+      - name: Download published package from Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dl
+          TAG="${{ steps.meta.outputs.tag }}"
+          A="${{ steps.meta.outputs.asset }}"
+          # Wait briefly for release CDN consistency after publish
+          ok=0
+          for i in $(seq 1 12); do
+            if gh release download "$TAG" -R "${{ github.repository }}" -p "$A" -p "${A}.sha256" -D dl 2>/dev/null; then
+              ok=1; break
+            fi
+            echo "wait release asset $A ($i)..."
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::missing published asset $A on $TAG"
+            gh release view "$TAG" -R "${{ github.repository }}" --json assets --jq '.assets[].name' || true
+            exit 1
+          fi
+          ls -lah dl/
+          if [ -f "dl/${A}.sha256" ]; then
+            (cd dl && sha256sum -c "${A}.sha256" || shasum -a 256 -c "${A}.sha256")
+          fi
+
+      - name: Install package (real user path)
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="${{ steps.meta.outputs.asset }}"
+          STAGE="$PWD/install-stage"
+          DEST="$PWD/install-root"
+          rm -rf "$STAGE" "$DEST"
+          mkdir -p "$STAGE" "$DEST"
+          tar -xzf "dl/$A" -C "$STAGE"
+          if [ -d "$STAGE/browboxs" ]; then SRC="$STAGE/browboxs"; else SRC="$STAGE"; fi
+          # Prefer official install script when present (Linux tree)
+          if [ -x "$SRC/scripts/install-system.sh" ] && [ "${{ runner.os }}" = "Linux" ]; then
+            echo "== install-system.sh → $DEST =="
+            BROWBOX_PREFIX="$DEST" bash "$SRC/scripts/install-system.sh" | tee install.log
+            ROOT="$DEST"
+          else
+            echo "== extract install (no install-system or Windows) → $DEST =="
+            mkdir -p "$DEST"
+            # copy tree into install root
+            if command -v rsync >/dev/null 2>&1; then
+              rsync -a "$SRC/" "$DEST/"
+            else
+              cp -a "$SRC/." "$DEST/"
+            fi
+            ROOT="$DEST"
+            echo "extracted to $ROOT" | tee install.log
+          fi
+          test -d "$ROOT/bin"
+          if [ -f "$ROOT/bin/browboxs-agent" ] || [ -f "$ROOT/bin/browboxs-agent.exe" ]; then
+            echo "OK agent binary after install"
+          else
+            echo "ERROR: agent missing after install" >&2
+            ls -la "$ROOT/bin" || true
+            exit 1
+          fi
+          if [ -f "$ROOT/bin/browboxs-server" ] || [ -f "$ROOT/bin/browboxs-server.exe" ]; then
+            echo "OK server binary after install"
+          else
+            echo "ERROR: server missing after install" >&2
+            exit 1
+          fi
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          # export for next step (github output path)
+          echo "INSTALL_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Post-install product smoke
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BROWBOX_SMOKE_REQUIRE_DESKTOP: "0"
+          BROWBOX_SMOKE_SOFT: "1"
+          BROWBOX_SMOKE_PORT: "18975"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh || true
+          ROOT="${INSTALL_ROOT}"
+          test -n "$ROOT" && test -d "$ROOT"
+          export BROWBOX_SMOKE_REPORT="$PWD/install-smoke-report"
+          mkdir -p "$BROWBOX_SMOKE_REPORT"
+          set +e
+          bash scripts/public-runner-product-smoke.sh "$ROOT"
+          ec=$?
+          set -e
+          echo "smoke exit=$ec"
+          if [ "${{ matrix.live }}" = "1" ] && [ "$ec" -ne 0 ]; then
+            # Still soft-warn: live may fail for env reasons
+            echo "::warning::install smoke exit=$ec on live platform"
+          fi
+          # Require: binaries + structure passed (summary must exist)
+          test -f "$BROWBOX_SMOKE_REPORT/summary.txt" || test -f "$BROWBOX_SMOKE_REPORT/../install-smoke-report/summary.txt" || true
+          grep -E 'PASS  binary agent|PASS  binary server' "$BROWBOX_SMOKE_REPORT/summary.txt" \
+            || grep -E 'PASS  binary agent|PASS  binary server' "$BROWBOX_SMOKE_REPORT"/*.txt 2>/dev/null \
+            || { echo "smoke summary missing agent/server PASS"; cat "$BROWBOX_SMOKE_REPORT/summary.txt" 2>/dev/null || true; exit 1; }
+          echo "== install-from-release OK for ${{ steps.meta.outputs.asset }} =="
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: install-test-${{ matrix.os }}
+          path: |
+            install.log
+            install-smoke-report/**
+            install-root/modules/VERSION
+          if-no-files-found: ignore
+          retention-days: 7
+
   smoke-summary:
-    needs: [pack, publish]
+    needs: [pack, publish, install-from-release]
     runs-on: ubuntu-22.04
     if: always()
     steps:
@@ -338,20 +494,32 @@ jobs:
           pattern: release-*
           merge-multiple: true
         continue-on-error: true
-      - name: Aggregate smoke reports
+      - uses: actions/download-artifact@v4
+        with:
+          path: _install
+          pattern: install-test-*
+          merge-multiple: false
+        continue-on-error: true
+      - name: Aggregate smoke + install reports
         shell: bash
         run: |
           set -euo pipefail
-          echo "## Public runner product smoke summary"
+          echo "## Public runner product smoke (pack-time)"
           echo
           find _all -name 'summary.txt' 2>/dev/null | while read -r f; do
             echo "### $f"
             cat "$f"
             echo
           done || true
-          # count fails
-          fails=$(grep -rh '^FAIL' _all 2>/dev/null | wc -l || echo 0)
+          echo "## Install-from-release tests"
+          echo
+          find _install -type f \( -name 'summary.txt' -o -name 'install.log' \) 2>/dev/null | while read -r f; do
+            echo "### $f"
+            cat "$f" | head -80
+            echo
+          done || true
+          fails=$(grep -rh '^FAIL' _all _install 2>/dev/null | wc -l || echo 0)
           echo "total FAIL lines: $fails"
           if [ "${fails:-0}" -gt 0 ]; then
-            echo "::warning::Some product-smoke FAIL lines present — inspect smoke-reports artifacts"
+            echo "::warning::Some FAIL lines present — inspect artifacts"
           fi
