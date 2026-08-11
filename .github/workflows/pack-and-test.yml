@@ -129,13 +129,13 @@ jobs:
           if gh release download "$TAG" -R "${{ github.repository }}" -p "$NAME" -p "${NAME}.sha256" -D kits; then
             echo "present=true" >> "$GITHUB_OUTPUT"
             ls -lah kits/
-            # kit must not contain source
-            tar -tzf "kits/$NAME" | head -40 > kits/listing.txt
-            if grep -E '(^|/)(crates/|Cargo.toml|apps/desktop/src/)' kits/listing.txt; then
+            # kit must not contain source (full listing; avoid tar|head SIGPIPE under pipefail)
+            tar -tzf "kits/$NAME" > kits/listing.txt
+            if grep -E '(^|/)(crates/|Cargo\.toml|apps/desktop/src/)' kits/listing.txt; then
               echo "ERROR: kit contains source paths" >&2
               exit 1
             fi
-            echo "OK kit is binary/layout only"
+            echo "OK kit is binary/layout only (entries=$(wc -l <kits/listing.txt))"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.allow_partial }}" != "true" ]; then
