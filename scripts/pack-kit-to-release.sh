@@ -201,7 +201,10 @@ normalize_stage() {
       "$ROOT/packaging/public-app-releases/scripts/$s" \
       "$stage/scripts/$s"; do
       if [ -f "$src" ]; then
-        cp -f "$src" "$stage/scripts/$s"
+        # skip when source is already the stage file (cp same-file fails under set -e)
+        if [ ! "$src" -ef "$stage/scripts/$s" ] 2>/dev/null; then
+          cp -f "$src" "$stage/scripts/$s"
+        fi
         break
       fi
     done
