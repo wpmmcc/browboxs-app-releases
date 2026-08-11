@@ -43,10 +43,10 @@ const MENUS = [
   "任务中心",
   "运营工具",
   "节点域名",
-  "检查更新",
+  "日志中心",
+  "更新与模块",
   "设置",
 ];
-// Keep monorepo scripts/ui-e2e in sync via sync-to-public-releases
 
 const report = {
   ok: true,
