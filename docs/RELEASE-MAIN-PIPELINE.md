@@ -1,6 +1,6 @@
 # 正式发布主链路（MAIN · 已验证冻结）
 
-> **状态**：2026-08-12 **架构确认**（本机交叉 / 私有原生 kit + 公开 pack/install 全矩阵已绿）  
+> **状态**：2026-08-12 **架构确认**（**本机交叉出 kit** + 公开 pack/install 全矩阵已绿；**私有仓 Actions 已关**）  
 > **SoT 关系**：本文件描述 **main 默认流程**；细节见  
 > [`PACKAGING-HYBRID-PRIVATE-PUBLIC.md`](./PACKAGING-HYBRID-PRIVATE-PUBLIC.md) ·  
 > [`PACKAGING-TYPES-AND-COMPAT.md`](./PACKAGING-TYPES-AND-COMPAT.md) ·  
@@ -11,7 +11,7 @@
 ## 0. 一句话
 
 ```text
-[私有] 多平台 Rust 核心二进制 → 无源码 kit
+[本机 monorepo] Rust 交叉编译 → 无源码 kit（无私有 GH runner）
     → [公开 main] pack 开源侧脚本/安装器 + 注入 UI 静态与更新源
     → 安装测试（真实用户路径）
     → 安装后 UI/功能测试（API 矩阵 + 可选 desktop/有头）
@@ -20,45 +20,47 @@
 
 | 层 | 仓 / 分支 | 做什么 | 不做什么 |
 |----|-----------|--------|----------|
-| **S0 Kit** | 私有 `browboxs-v2-private` **`main`** · `prepare-kits.yml` | 每平台 **原生 runner** 编 agent/server/(desktop) → harden → `kit-<os>-<arch>.tar.gz` 上传公开 prerelease `kits-v*` | 不打 deb/nsis；不把 monorepo 源码推公开 |
+| **S0 Kit** | **本机**（私有 monorepo 检出）· `scripts/host-cross-kits.sh` / `make-kit.sh` | 本机 Rust **交叉编译** agent/server → harden → `kit-<os>-<arch>.tar.gz` 上传公开 prerelease `kits-v*` | **私有仓 GitHub Actions 已关闭**；禁止再在 private 上跑 prepare-kits/release runner |
 | **S1 Pack** | 公开 `browboxs-app-releases` **`main`** · `pack-and-test` | 消费 kit；`pack-kit-to-release` 组合 **可开源内容**（scripts / INSTALL / update-modules / manifest 通道） | **禁止** `cargo build` 核心 crates |
 | **S2 Install** | 同 workflow `install-from-release` | 从 **正式 `v*` Release** 下载用户包 → 解压/`install-system` → 结构断言 | 不测 monorepo checkout |
 | **S3 UI/功能** | 同 runner 上 `product-smoke` +（扩展）UI 功能门禁 | 安装根上：鉴权、工作台依赖 API、更新 own-source；Linux xvfb desktop；有头点击 lab 另轨 | 不在公开仓编译 React 业务源（UI dist 已在 kit） |
 
-**废弃 / 降级**（不再作为 main 默认）：
+**废弃 / 禁止**：
 
-- 公开 main 长期只吃「旧 kit / 仅 linux-x86_64 单独编」——现已 **6 平台 kit 矩阵** 为默认。  
-- 把 `test/cross-pack-*` 当长期发版分支——验证后 **合入 public main**。  
-- 本机交叉编出的二进制直接当正式 linux-x64 用户包（**GLIBC 偏新**）——正式 **linux-x86_64 必须在 ubuntu-22.04 原生编**。
+- 私有仓 `prepare-kits` / `release` / `ci` 等 **GitHub-hosted runner 编译**（workflow 已删，Actions `enabled=false`）。  
+- 公开 main 长期只吃「旧 kit / 仅 linux-x86_64」——有本机出的多平台 kit 则全量 pack。  
+- 宿主新 glibc 的 linux-x64 直接当正式包——正式优先 **`host-cross-kits.sh --docker-glibc22`**。  
+- `test/cross-pack-*` 当长期发版分支——以 **public main** 为准。
 
 ---
 
 ## 1. Kit 来源策略（确认）
 
-### 1.1 正式默认（MAIN）
+### 1.1 正式默认（MAIN）— **本机交叉，无私有 runner**
 
-| 平台 | 产出位置 | triple / runner | 说明 |
-|------|----------|-----------------|------|
-| linux-x86_64 | 私有 prepare-kits | `ubuntu-22.04` · `x86_64-unknown-linux-gnu` | **GLIBC ≤ 2.34**，与 22.04 用户对齐 |
-| linux-aarch64 | 私有 | `ubuntu-24.04-arm` | 原生 arm |
-| windows-x86_64 | 私有 | `windows-latest` · msvc | 原生 |
-| windows-aarch64 | 私有 | `windows-11-arm` · msvc | 原生（已验证） |
-| darwin-aarch64 | 私有 | `macos-latest` | 原生 |
-| darwin-x86_64 | 私有 | `macos-latest` cross-target | Apple 同机交叉 |
+| 平台 | 产出方式 | triple | 说明 |
+|------|----------|--------|------|
+| linux-x86_64 | 本机或 **`host-cross-kits.sh --docker-glibc22`** | `x86_64-unknown-linux-gnu` | 正式用户包优先 Docker 22.04 编（GLIBC ≤ 2.34） |
+| linux-aarch64 | 本机 cross（`gcc-aarch64-linux-gnu`） | `aarch64-unknown-linux-gnu` | host-cross 默认 |
+| windows-x86_64 | 本机 cross **mingw-gnu** | `x86_64-pc-windows-gnu` | host-cross 默认；非 msvc |
+| windows-aarch64 | **仅 Windows ARM 本机** | `aarch64-pc-windows-msvc` | Linux 宿主无法交叉 |
+| darwin-aarch64 / x86_64 | **仅 macOS 本机** | `*-apple-darwin` | Linux 宿主无法交叉 |
 
-产出名：`kit-linux-x86_64.tar.gz` … `kit-windows-aarch64.tar.gz` · `kit-darwin-*.tar.gz`  
-中转：公开仓 **prerelease** `kits-v<ver>`（仅二进制 + 布局，无 crates）。
+产出名：`kit-linux-x86_64.tar.gz` …（有本机才有对应 kit）  
+中转：公开仓 **prerelease** `kits-v<ver>`。
 
-### 1.2 辅助：本机 / 宿主机 Rust 交叉（可走通，非 main 默认）
+```bash
+# 本机一次出可交叉平台 kit 并上传 + 触发公开 pack
+BROWBOX_VERSION=0.2.5 bash scripts/host-cross-kits.sh --docker-glibc22 --publish --dispatch
+```
 
-| 场景 | 适用 | 限制 |
-|------|------|------|
-| 本机 `cargo` + rustup target | linux-x86_64 / linux-aarch64 / windows-gnu **快速试装** | 宿主 glibc 常 > 22.04 → 公开 22.04 **live smoke 需 soft**；**不可替代** 正式 22.04 kit |
-| 本机交叉 darwin / win-arm | **不可靠**（无 Apple SDK / 无 arm MSVC） | 必须原生 runner |
-| Docker `ubuntu:22.04` 编 x64 | 本机模拟正式 linux-x64 | 可作本地验收，正式仍以 CI prepare-kits 为准 |
+### 1.2 已废弃：私有 GitHub `prepare-kits` runner
 
-辅助路径仍须：`make-kit` / `publish-kit-to-public` → 同一 `kits-v*` → **公开 main** `pack-and-test`。  
-**不**在公开仓编 Rust 核心。
+| 项 | 状态 |
+|----|------|
+| private `prepare-kits.yml` / `release.yml` / `ci.yml` | **已删除**；仓库 Actions **enabled=false** |
+| 私有仓 hosted / self-hosted runner 编译 | **禁止再启用**（除非业主明确改决策） |
+| 公开 `pack-and-test` free runners | **保留**（只 pack + 安装测，不编核心） |
 
 ### 1.3 Kit 内与「可开源组合」边界
 
@@ -82,15 +84,18 @@ kit（私有产出，无业务源码）
 
 ## 2. MAIN 分支日常命令（正常流程）
 
-### 2.1 私有 core `main`
+### 2.1 本机 monorepo（S0 · 唯一 kit 源）
 
 ```bash
-# 正式：六平台 kit（含 desktop 时 with_desktop=1）
-gh workflow run prepare-kits.yml -R wpmmcc/browboxs-v2-private --ref main \
-  -f version=0.2.5 -f with_desktop=1 -f dispatch_public=true
+# 交叉可出的平台 + 可选 22.04 docker 出 linux-x64 + 上传 + 触发公开 pack
+BROWBOX_VERSION=0.2.5 bash scripts/host-cross-kits.sh --docker-glibc22 --publish --dispatch
+
+# 仅当前 OS 单 kit：
+BROWBOX_VERSION=0.2.5 bash scripts/make-kit.sh
+bash scripts/publish-kit-to-public.sh --version 0.2.5 --dispatch
 ```
 
-`prepare-kits` 成功后：上传 `kits-v0.2.5` → `repository_dispatch` / `workflow_dispatch` 触发公开 **main** `pack-and-test`。
+**不要**再对 `wpmmcc/browboxs-v2-private` 执行任何 `gh workflow run`（Actions 已关、YAML 已删）。
 
 ### 2.2 公开 app-releases `main`
 
@@ -111,16 +116,9 @@ bash scripts/sync-to-public-releases.sh --all --version 0.2.5
 
 `sync-to-public-releases.sh` 目标默认 **`origin/main`**（见脚本），不再依赖 `test/cross-pack-*`。
 
-### 2.4 本机交叉辅助（可选）
+### 2.4 mac / win-arm（需对应本机）
 
-```bash
-# 例：本机出 linux/win-gnu 试验 kit → 上传 → 公开 pack（allow_partial）
-BROWBOX_VERSION=0.2.5-dev bash scripts/make-kit.sh   # 当前 OS/target
-bash scripts/publish-kit-to-public.sh --version 0.2.5-dev --dispatch
-```
-
-正式发版 **不要** 用宿主 glibc 编的 linux-x64 覆盖 `kits-v*` 正式 tag。
-
+Linux 宿主 **不能** 交叉出 darwin / windows-aarch64。若要这些 kit：在对应机器上跑 `make-kit.sh` 后 `publish-kit-to-public.sh` 上传到同一 `kits-v*`，再触发公开 pack（`allow_partial` 可先 true）。
 ---
 
 ## 3. 测试四级（与 workflow 对齐）
@@ -165,7 +163,7 @@ bash scripts/publish-kit-to-public.sh --version 0.2.5-dev --dispatch
 
 ## 6. 发版检查单（main）
 
-1. [ ] 私有 `main`：`prepare-kits` 全绿（或 allow 的缺平台已声明）  
+1. [ ] 本机 `host-cross-kits.sh` / `make-kit` 产出目标 kit 并上传 `kits-v*`（私有 Actions 保持关闭）  
 2. [ ] 公开 `kits-v<ver>` 含目标平台 kit + sha256  
 3. [ ] 公开 `main`：`pack-and-test` 全绿（pack + publish + install-from-release）  
 4. [ ] `v<ver>` Release 资产与 `RELEASE-SHA256SUMS.txt` 齐全  

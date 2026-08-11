@@ -22,7 +22,7 @@
 ## MAIN 流程
 
 ```text
-私有 prepare-kits (main) → kits-v* → 公开 pack-and-test (main)
+本机 host-cross-kits（私有 Actions 已关） → kits-v* → 公开 pack-and-test (main)
   → pack + product-smoke
   → publish v*
   → install-from-release
