@@ -151,6 +151,32 @@ def wait_webdriver(tries: int = 80) -> bool:
     return False
 
 
+def activate_workbench_window(sid: str, js, timeout_s: float = 90) -> tuple[str, bool]:
+    """Pick the WebView window that shows workbench nav (not splash)."""
+    deadline = time.time() + timeout_s
+    last_text = ""
+    while time.time() < deadline:
+        handles = wd("GET", f"/session/{sid}/window/handles")["value"]
+        for h in reversed(handles):
+            try:
+                wd("POST", f"/session/{sid}/window", {"handle": h})
+            except Exception:
+                continue
+            text = js("return (document.body && document.body.innerText) || '';") or ""
+            last_text = text
+            nav_n = js(
+                """
+return [...document.querySelectorAll('[data-testid]')]
+  .map(e=>e.getAttribute('data-testid'))
+  .filter(t=>t&&t.startsWith('nav-')).length;
+"""
+            ) or 0
+            if "环境管理" in text or nav_n > 0:
+                return text, True
+        time.sleep(0.35)
+    return last_text, False
+
+
 def main() -> int:
     global pass_n, fail_n
     if not DESKTOP.is_file():
@@ -256,14 +282,6 @@ def main() -> int:
         sid = j["value"]["sessionId"]
         log_pass("webdriver session", sid[:12])
 
-        time.sleep(2.5)
-        handles = wd("GET", f"/session/{sid}/window/handles")["value"]
-        if not handles:
-            log_fail("no window handles")
-            return 1
-        wd("POST", f"/session/{sid}/window", {"handle": handles[0]})
-        log_pass("switch page handle")
-
         def js(script: str, args: list | None = None):
             return wd(
                 "POST",
@@ -272,18 +290,13 @@ def main() -> int:
                 timeout=40,
             )["value"]
 
-        # wait shell
-        text = ""
-        for _ in range(40):
-            text = js("return (document.body && document.body.innerText) || '';") or ""
-            if "环境管理" in text or "data-testid" in (js("return document.body.innerHTML.slice(0,200)") or ""):
-                break
-            time.sleep(0.25)
+        boot_timeout = 90.0 if DRIVER_MODE == "embedded" else 45.0
+        text, boot_ok = activate_workbench_window(sid, js, timeout_s=boot_timeout)
         (OUT / "ui-boot.txt").write_text(str(text)[:5000], encoding="utf-8")
-        if "环境管理" not in text:
-            log_fail("boot workbench labels", str(text)[:180])
-        else:
+        if boot_ok:
             log_pass("boot workbench shell")
+        else:
+            log_fail("boot workbench labels", str(text)[:180])
 
         def click_testid(tid: str) -> dict:
             return js(
