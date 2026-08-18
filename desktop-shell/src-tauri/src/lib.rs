@@ -253,7 +253,14 @@ fn show_main(app: &tauri::AppHandle) {
         let _ = w.unminimize();
     }
     if let Some(s) = app.get_webview_window("splash") {
-        let _ = s.close();
+        // WebDriver attaches to the first window. Closing splash races
+        // tauri-driver's getWindowHandle (seen on ubuntu-arm). Hide instead
+        // when BROWBOX_E2E_KEEP_SPLASH=1; production still closes.
+        if std::env::var("BROWBOX_E2E_KEEP_SPLASH").ok().as_deref() == Some("1") {
+            let _ = s.hide();
+        } else {
+            let _ = s.close();
+        }
     }
 }
 

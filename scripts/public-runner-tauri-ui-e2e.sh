@@ -140,6 +140,7 @@ export BROWBOX_DESKTOP="$DESKTOP"
 export BROWBOX_AGENT_BIN="$AGENT"
 export BROWBOX_TAURI_E2E_REPORT="$REPORT"
 export BROWBOX_AGENT_PORT="${BROWBOX_AGENT_PORT:-18985}"
+export BROWBOX_E2E_KEEP_SPLASH=1
 export TAURI_DRIVER="$(command -v tauri-driver)"
 
 run_wdio() {

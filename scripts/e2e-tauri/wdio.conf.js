@@ -75,6 +75,7 @@ export const config = {
         BROWBOX_PREFIX: PREFIX,
         BROWBOX_AGENT_PORT: AGENT_PORT,
         BROWBOX_AGENT_DATA: PREFIX ? path.join(PREFIX, "data", "agent") : "",
+        BROWBOX_E2E_KEEP_SPLASH: "1",
         DISPLAY: process.env.DISPLAY || ":0",
       },
     });
