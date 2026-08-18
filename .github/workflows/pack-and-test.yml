@@ -356,17 +356,18 @@ jobs:
             done
             echo
           } > out/RELEASE-PRIMARY-6.txt
-          missing=0
-          for f in "${PRIMARY[@]}"; do
+          miss=0
+          for i in "${!PRIMARY[@]}"; do
+            f="${PRIMARY[$i]}"
             if [ -f "out/$f" ]; then
               echo "OK primary $f"
               echo "$f" >> out/RELEASE-PRIMARY-6.txt
             else
-              echo "::error::missing primary install package: $f (need kit ${KIT_MAP[$missing]:-?})"
-              missing=$((missing + 1))
+              echo "::error::missing primary install package: $f (need kit ${KIT_MAP[$i]})"
+              miss=$((miss + 1))
             fi
           done
-          if [ "$missing" -gt 0 ]; then
+          if [ "$miss" -gt 0 ]; then
             echo "::error::RELEASE requires all 6 primary tree packages (linux/macos/windows × arm/x86)"
             ls -la out/browboxs-*.tar.gz 2>/dev/null || true
             exit 1
@@ -402,25 +403,7 @@ jobs:
             done
           ) > out/RELEASE-SHA256SUMS.txt
           TAG="${{ steps.meta.outputs.tag }}"
-          NOTES="$(cat <<EOF
-browboxs ${V} — **6 primary install packages** (tree tar.gz, one per OS × arch):
-
-| # | OS | Arch | Download |
-|---|-----|------|----------|
-| 1 | Linux | x86_64 | \`browboxs-${V}-linux-x86_64.tar.gz\` |
-| 2 | Linux | arm64 | \`browboxs-${V}-linux-aarch64.tar.gz\` |
-| 3 | macOS | x86_64 | \`browboxs-${V}-macos-x86_64.tar.gz\` |
-| 4 | macOS | arm64 | \`browboxs-${V}-macos-aarch64.tar.gz\` |
-| 5 | Windows | x86_64 | \`browboxs-${V}-windows-x86_64.tar.gz\` |
-| 6 | Windows | arm64 | \`browboxs-${V}-windows-aarch64.tar.gz\` |
-
-Kits: \`kits-v${V}\` (6 cells: \`kit-linux-*\`, \`kit-darwin-*\`, \`kit-windows-*\`).
-
-Linux may also ship \`.deb\` / \`-portable.zip\`; Windows may ship \`-portable\` — optional variants of the same 6 cells.
-
-Public runners: pack + install-from-release + headed UI e2e. Entry: **browboxs-desktop**. See INSTALL.md and RELEASE-PRIMARY-6.txt.
-EOF
-)"
+          NOTES="browboxs ${V} — 6 primary install packages (tree tar.gz): linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64, windows-x86_64, windows-aarch64. Kits: kits-v${V} (6 cells). See RELEASE-PRIMARY-6.txt and INSTALL.md. Entry: browboxs-desktop."
           mapfile -t FILES < <(find out -type f | sort)
           echo "uploading ${#FILES[@]} files:"
           printf '  %s\n' "${FILES[@]}"
