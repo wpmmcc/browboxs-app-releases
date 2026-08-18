@@ -78,6 +78,16 @@ fi
 ok "desktop binary present"
 chmod +x "$DESKTOP" "$AGENT" 2>/dev/null || true
 
+# GitHub macos-latest is arm64; the x86_64 desktop runs under Rosetta.
+# WKWebView execute/sync is unreliable there — keep native aarch64 as the hard gate.
+if [[ "$OS" == Darwin* ]]; then
+  HOST_ARCH="$(uname -m)"
+  if file -b "$DESKTOP" 2>/dev/null | grep -q 'x86_64' && [ "$HOST_ARCH" = "arm64" ]; then
+    warn "Rosetta: x86_64 desktop on arm64 runner — S3b non-strict (native aarch64 remains hard gate)"
+    STRICT=0
+  fi
+fi
+
 export PATH="${HOME}/.cargo/bin:${PATH}"
 if [ "$E2E_DRIVER" = "external" ]; then
   if ! command -v tauri-driver >/dev/null 2>&1; then

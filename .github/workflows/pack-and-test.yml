@@ -689,7 +689,7 @@ jobs:
         if: steps.dl_pkg.outputs.present != 'false' && matrix.ui_e2e == '1'
         shell: bash
         env:
-          BROWBOX_TAURI_E2E_STRICT: ${{ (runner.os == 'Linux' || runner.os == 'macOS') && '1' || '0' }}
+          BROWBOX_TAURI_E2E_STRICT: ${{ (runner.os == 'Linux' || contains(matrix.asset, 'macos-aarch64')) && '1' || '0' }}
           BROWBOX_E2E_DRIVER: ${{ runner.os == 'macOS' && 'embedded' || '' }}
           BROWBOX_AGENT_PORT: "18985"
         run: |
@@ -710,7 +710,7 @@ jobs:
           set -e
           echo "S3b tauri WebView e2e exit=$ec"
           if [ "$ec" -ne 0 ]; then
-            if [ "${{ runner.os }}" = "Linux" ] || [ "${{ runner.os }}" = "macOS" ]; then
+            if [ "${{ runner.os }}" = "Linux" ] || [[ "${{ steps.meta.outputs.asset }}" == *macos-aarch64* ]]; then
               echo "::error::S3b Tauri WebView e2e FAILED on ${{ runner.os }} — see install-tauri-e2e-report"
               cat "$BROWBOX_TAURI_E2E_REPORT/summary.txt" 2>/dev/null || true
               exit 1

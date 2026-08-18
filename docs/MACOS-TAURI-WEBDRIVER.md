@@ -1,100 +1,88 @@
 # macOS Tauri WebView 自动化（装机 / CI）
 
-> 结论：**不能**在 macOS 上直接用 `tauri-driver + WebKitWebDriver`（Linux 那条路）。  
-> Apple **没有**给嵌入式 WKWebView 提供系统级 WebDriver；`safaridriver` 只驱动 Safari 浏览器本身。
+> **结论（已落地）：** macOS 无法走 `tauri-driver + WebKitWebDriver`（Apple 不给 WKWebView 系统级 driver）。  
+> **深入测试**必须在 release 二进制中编入 **`tauri-plugin-wdio-webdriver`**（feature `wdio-e2e`），通过 **`TAURI_WEBDRIVER_PORT`** 启动内嵌 W3C WebDriver，再跑与 Linux 同源的 `full_workbench_installed.py`。
 
 ---
 
-## 平台对照
+## 方案对比（为何改二进制）
 
-| 平台 | 外部 native driver | 本仓库 S3b 现状 |
-|------|-------------------|-----------------|
-| **Linux** | `WebKitWebDriver`（`webkit2gtk-driver`）+ `tauri-driver` | **硬门禁**：`full_workbench_installed.py` 全侧栏 + 创建环境 + API 双断言 |
-| **Windows** | `msedgedriver` + `tauri-driver` | 跑 full workbench，默认 non-strict |
-| **macOS** | **无** Apple 官方 WKWebView driver | **跳过** WebView 点测；仅 S3a API + 进程 smoke |
+| 方案 | 不改二进制能否深入 WebView 点测 | 说明 |
+|------|--------------------------------|------|
+| 官方 `tauri-driver` 直连 | ❌ | mac 无 WKWebView native driver |
+| CrabNebula | ✅ | 需 `CN_API_KEY`；测未改 release 包 |
+| **Embedded `tauri-plugin-wdio-webdriver`** | ❌（需编译进包） | **本仓库选用**；与 Linux 同一套 full workbench 脚本 |
 
-官方说明：[Tauri WebDriver manual setup](https://v2.tauri.app/develop/tests/webdriver/manual-setup/) — *direct tauri-driver: macOS has no WKWebView driver tool available*。
+不改二进制只能做 **S3a API 矩阵 + 进程 smoke**，无法点击侧栏、填表、校验 WebView 与 API 双断言。
 
 ---
 
-## macOS 上「应该有什么」（按推荐顺序）
+## 平台对照（当前 S3b）
 
-### 1. 官方推荐：`@wdio/tauri-service` + **embedded** WebDriver（首选）
+| 平台 | Driver 模式 | 门禁 |
+|------|-------------|------|
+| **Linux** | `external`：`tauri-driver` + `WebKitWebDriver` | **硬门禁** |
+| **Windows** | `external`：`tauri-driver` + `msedgedriver` | 默认 soft（`STRICT=0`） |
+| **macOS** | **`embedded`**：`TAURI_WEBDRIVER_PORT` → 应用内 HTTP server | **硬门禁**（与 Linux 同级） |
 
-应用内嵌 W3C WebDriver HTTP 服务，**不依赖**外部 `tauri-driver`：
+Pack 阶段（public runner）默认：
 
-| 组件 | 包 | 作用 |
-|------|-----|------|
-| Rust 内嵌 server | `tauri-plugin-wdio-webdriver` | 应用内 HTTP WebDriver（WKWebView 原生 API） |
-| 进阶 IPC/日志 | `tauri-plugin-wdio` + `@wdio/tauri-plugin` | `browser.tauri.execute()`、mock、日志 |
-| 测试 runner | `@wdio/tauri-service` | `driverProvider: 'embedded'`（mac 默认） |
+```bash
+BROWBOX_DESKTOP_WDIO=1   # tauri build --features wdio-e2e
+```
 
-文档：[WebdriverIO Tauri plugin setup](https://webdriver.io/docs/desktop-testing/tauri/plugin-setup/)
+未设置 `TAURI_WEBDRIVER_PORT` 时插件 **不监听**（正常用户无自动化端口）。
 
-**要点：**
+---
 
-- 插件应 **`#[cfg(debug_assertions)]` 或 feature 门控**，不要打进普通 release（安全面）。
-- 服务通过环境变量 **`TAURI_WEBDRIVER_PORT`** 启动内嵌 server；正常用户不设置则不应监听。
-- 对 **公开 runner 已发布的 release 包**：当前 **未** 编入 embedded 插件 → **无法** 对「用户同款二进制」做 WebView 点测。
-- 若要 mac CI 硬门禁：需在 `desktop-shell` 增加 `wdio-e2e` feature，**仅 mac pack** 时 `tauri build --features wdio-e2e`，并接 `@wdio/tauri-service`。
+## 实现要点
 
-### 2. 商业：CrabNebula WebDriver
-
-- 跨平台外部 driver fork，**mac 需 API key**（`CN_API_KEY`）。
-- 适合测 **未改二进制** 的 release 安装包。
-- 文档：[CrabNebula setup](https://webdriver.io/docs/desktop-testing/tauri/crabnebula-setup/)
-
-### 3. 社区
-
-| 项目 | 说明 |
+| 组件 | 位置 |
 |------|------|
-| [danielraffel/tauri-webdriver](https://danielraffel.me/2026/02/14/i-built-a-webdriver-for-wkwebview-tauri-apps-on-macos/) | WKWebView W3C driver；需 app 内 debug plugin + CLI `tauri-wd` |
-| [tauri-pilot](https://github.com/foxycode-dev/tauri-pilot) | LLM/调试向，非装机门禁 |
-| [mcp-tauri-automation](https://github.com/danielraffel/mcp-tauri-automation) | MCP + WebDriver，偏 mac 开发期 |
+| Feature + 依赖 | `desktop-shell/src-tauri/Cargo.toml` → `wdio-e2e` |
+| 插件注册 | `lib.rs` → `#[cfg(feature = "wdio-e2e")] builder.plugin(...)` |
+| 权限 | `capabilities/default.json` → `wdio-webdriver:default` |
+| Pack | `scripts/build-desktop-from-kit.sh` |
+| 测试 | `scripts/e2e-tauri/full_workbench_installed.py`（`BROWBOX_E2E_DRIVER=embedded`） |
+| Runner | `scripts/public-runner-tauri-ui-e2e.sh` |
+
+### macOS CI 环境变量
+
+```bash
+export BROWBOX_E2E_DRIVER=embedded
+export TAURI_WEBDRIVER_PORT=4445
+export BROWBOX_E2E_KEEP_SPLASH=1
+export BROWBOX_TAURI_E2E_STRICT=1
+python3 scripts/e2e-tauri/full_workbench_installed.py
+```
 
 ---
 
-## 与本仓库 public runner 的关系
+## Pipeline 布局
 
 ```text
 S3a  product-smoke     → API 矩阵（全平台）
-S3b  tauri WebView     → Linux full workbench（硬）
-                       → Windows full workbench（软）
-                       → macOS skip（待 embedded 或 CrabNebula）
+S3b  tauri WebView     → full_workbench_installed.py
+                       → Linux/Win external · macOS embedded
 S3c  Playwright 静态页 → lab，非产品门
 ```
 
-**Linux full workbench 覆盖**（`scripts/e2e-tauri/full_workbench_installed.py`）：
+**Full workbench 覆盖：**
 
 - 侧栏 **全部 nav** 模块点击 + 页面关键词
 - **新建环境**：填名、点创建、API 校验 profiles
 - **代理 / 引擎 / 工作流 / 任务** API 双断言
-- 非「点两下设置就绿」
 
 ---
 
-## 下一步接 mac（待选方案）
+## 安全说明
 
-**A. Embedded（与 Linux 同源测试脚本，改 WDIO 配置）**
-
-1. `desktop-shell` 加 optional feature `wdio-e2e` → `tauri-plugin-wdio-webdriver`
-2. macOS pack job：`BROWBOX_DESKTOP_WDIO=1 tauri build --features wdio-e2e`
-3. `install-from-release` mac：`@wdio/tauri-service` embedded + 移植 full workbench 为 WDIO spec
-4. Release 包是否含 plugin：仅当 `TAURI_WEBDRIVER_PORT` 未设置时不监听（需安全评审）
-
-**B. CrabNebula（不改产品二进制）**
-
-1. 仓库 secret `CN_API_KEY`
-2. mac job：`driverProvider: 'crabnebula'`
-3. 同一 full workbench 逻辑
-
-**C. 维持 mac skip + 本机/签后人工**
-
-- Linux 硬门禁 + S3a API 覆盖 mac 同款 agent/server/ui dist
+- `wdio-e2e` 仅用于 **public runner 编译的安装包**；插件仅在 `TAURI_WEBDRIVER_PORT` 设置时暴露 loopback WebDriver。
+- 若需「用户同款、零插件」的 mac 深度测试，可另开 CrabNebula 路径（`CN_API_KEY`），与本 embedded 路径二选一或并行。
 
 ---
 
-## 命令（本机 Linux full workbench）
+## 本机 Linux full workbench
 
 ```bash
 export BROWBOX_PREFIX="$HOME/.local/opt/browboxs-lab"
@@ -102,7 +90,5 @@ export BROWBOX_DESKTOP="$BROWBOX_PREFIX/bin/browboxs-desktop"
 export BROWBOX_E2E_KEEP_SPLASH=1
 cargo install tauri-driver --locked
 # apt install webkit2gtk-driver xvfb
-bash apps/desktop/e2e-tauri/run-full-workbench.sh
-# 或
 python3 scripts/e2e-tauri/full_workbench_installed.py
 ```

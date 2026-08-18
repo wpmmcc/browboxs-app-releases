@@ -159,24 +159,40 @@ def activate_workbench_window(sid: str, js, timeout_s: float = 90) -> tuple[str,
     """Pick the WebView window that shows workbench nav (not splash)."""
     deadline = time.time() + timeout_s
     last_text = ""
+    js_fail = 0
     while time.time() < deadline:
-        handles = wd("GET", f"/session/{sid}/window/handles")["value"]
-        for h in reversed(handles):
+        try:
+            handles = wd("GET", f"/session/{sid}/window/handles")["value"]
+        except Exception:
+            time.sleep(0.35)
+            continue
+        for h in reversed(handles or []):
             try:
                 wd("POST", f"/session/{sid}/window", {"handle": h})
             except Exception:
                 continue
-            text = js("return (document.body && document.body.innerText) || '';") or ""
-            last_text = text
+            text = js("return (document.body && document.body.innerText) || '';")
+            if text is None:
+                js_fail += 1
+                if js_fail >= 3:
+                    return last_text, False
+                continue
+            last_text = text or ""
             nav_n = js(
                 """
 return [...document.querySelectorAll('[data-testid]')]
   .map(e=>e.getAttribute('data-testid'))
   .filter(t=>t&&t.startsWith('nav-')).length;
 """
-            ) or 0
-            if "环境管理" in text or nav_n > 0:
-                return text, True
+            )
+            if nav_n is None:
+                js_fail += 1
+                if js_fail >= 3:
+                    return last_text, False
+                continue
+            js_fail = 0
+            if "环境管理" in last_text or (nav_n or 0) > 0:
+                return last_text, True
         time.sleep(0.35)
     return last_text, False
 
@@ -296,25 +312,31 @@ def main() -> int:
             }
         last_err: Exception | None = None
         j = None
-        for attempt in range(1, 9):
+        attempts = 8 if DRIVER_MODE == "embedded" else 2
+        sess_timeout = 25 if DRIVER_MODE == "embedded" else 90
+        for attempt in range(1, attempts + 1):
             try:
-                j = wd("POST", "/session", caps, timeout=90)
+                j = wd("POST", "/session", caps, timeout=sess_timeout)
                 break
             except Exception as e:
                 last_err = e
-                time.sleep(1.5)
+                time.sleep(1.2)
         if j is None:
             raise last_err or RuntimeError("session create failed")
         sid = j["value"]["sessionId"]
         log_pass("webdriver session", sid[:12] + (f" attempt={attempt}" if attempt > 1 else ""))
 
         def js(script: str, args: list | None = None):
-            return wd(
-                "POST",
-                f"/session/{sid}/execute/sync",
-                {"script": script, "args": args or []},
-                timeout=40,
-            )["value"]
+            try:
+                return wd(
+                    "POST",
+                    f"/session/{sid}/execute/sync",
+                    {"script": script, "args": args or []},
+                    timeout=20,
+                )["value"]
+            except Exception as e:
+                print(f"WARN  js · {e}")
+                return None
 
         boot_timeout = 90.0 if DRIVER_MODE == "embedded" else 45.0
         text, boot_ok = activate_workbench_window(sid, js, timeout_s=boot_timeout)
@@ -325,7 +347,7 @@ def main() -> int:
             log_fail("boot workbench labels", str(text)[:180])
 
         def click_testid(tid: str) -> dict:
-            return js(
+            r = js(
                 """
 const id = arguments[0];
 const el = document.querySelector(`[data-testid="${id}"]`);
@@ -336,9 +358,10 @@ return {ok:true, id, text:(el.textContent||'').trim().slice(0,60)};
 """,
                 [tid],
             )
+            return r if isinstance(r, dict) else {"ok": False}
 
         def click_text(partial: str) -> dict:
-            return js(
+            r = js(
                 """
 const p = arguments[0];
 const nodes = [...document.querySelectorAll('button,a,[role=button],nav button,[data-testid]')];
@@ -350,6 +373,7 @@ return {ok:true, text:(el.textContent||'').trim().slice(0,80)};
 """,
                 [partial],
             )
+            return r if isinstance(r, dict) else {"ok": False}
 
         def body_text() -> str:
             return js("return (document.body && document.body.innerText) || '';") or ""
@@ -360,6 +384,8 @@ return {ok:true, text:(el.textContent||'').trim().slice(0,80)};
 return [...document.querySelectorAll('[data-testid]')].map(e=>e.getAttribute('data-testid')).filter(t=>t&&t.startsWith('nav-'));
 """
         ) or []
+        if not isinstance(present, list):
+            present = []
         present_set = set(present)
         (OUT / "nav-present.json").write_text(json.dumps(list(present_set), ensure_ascii=False, indent=2))
         log_pass("nav inventory", f"{len(present_set)} items: {sorted(present_set)}")
@@ -406,7 +432,7 @@ return {ok:true, value: el.value};
 """,
             [name],
         )
-        if fill and fill.get("ok"):
+        if isinstance(fill, dict) and fill.get("ok"):
             log_pass("fill create name", name)
         else:
             log_fail("fill create name", str(fill))
