@@ -107,9 +107,17 @@ chmod +x "$SHELL_DIR/src-tauri/binaries/"* 2>/dev/null || true
   if [ -f package-lock.json ]; then npm ci --ignore-scripts || npm ci; else npm install --no-audit --no-fund; fi
   # --no-bundle: we only need the desktop binary; pack-kit-to-release makes tar/deb.
   TAURI_ARGS=(build --no-bundle --target "$DESKTOP_TARGET")
-  if [ "${BROWBOX_DESKTOP_WDIO:-1}" = "1" ]; then
+  # Linux/Win use external tauri-driver. Embedded plugin is macOS-only by default
+  # (init() would otherwise bind :4445 and collide with WebKitWebDriver).
+  if [ -z "${BROWBOX_DESKTOP_WDIO:-}" ]; then
+    case "$(uname -s 2>/dev/null || echo unknown)" in
+      Darwin*) BROWBOX_DESKTOP_WDIO=1 ;;
+      *) BROWBOX_DESKTOP_WDIO=0 ;;
+    esac
+  fi
+  if [ "${BROWBOX_DESKTOP_WDIO}" = "1" ]; then
     TAURI_ARGS+=(--features wdio-e2e)
-    echo "  wdio-e2e=1 (embedded WebDriver; macOS + env TAURI_WEBDRIVER_PORT)"
+    echo "  wdio-e2e=1 (embedded WebDriver; requires TAURI_WEBDRIVER_PORT at runtime)"
   fi
   npx tauri "${TAURI_ARGS[@]}"
 )

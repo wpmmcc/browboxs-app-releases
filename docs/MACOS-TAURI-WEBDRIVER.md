@@ -23,15 +23,15 @@
 |------|-------------|------|
 | **Linux** | `external`：`tauri-driver` + `WebKitWebDriver` | **硬门禁** |
 | **Windows** | `external`：`tauri-driver` + `msedgedriver` | 默认 soft（`STRICT=0`） |
-| **macOS** | **`embedded`**：`TAURI_WEBDRIVER_PORT` → 应用内 HTTP server | **硬门禁**（与 Linux 同级） |
+| **macOS aarch64** | **`embedded`** | **硬门禁**（原生 ARM） |
+| **macOS x86_64** | **`embedded`** | **非硬门禁**：GitHub `macos-latest` 为 ARM，x86_64 走 Rosetta；WKWebView `execute/sync` 会 script timeout。原生 Intel 机仍可 STRICT=1 |
 
-Pack 阶段（public runner）默认：
+Pack 阶段：
 
-```bash
-BROWBOX_DESKTOP_WDIO=1   # tauri build --features wdio-e2e
-```
+- **macOS**：`BROWBOX_DESKTOP_WDIO=1` → `tauri build --features wdio-e2e`
+- **Linux / Windows**：不编入插件（走外部 `tauri-driver`）
 
-未设置 `TAURI_WEBDRIVER_PORT` 时插件 **不监听**（正常用户无自动化端口）。
+运行时仅当设置 `TAURI_WEBDRIVER_PORT` 时才 `init()` 插件。上游 `init()` 在环境变量未设时仍会监听 **4445**，会与 Linux `WebKitWebDriver` 抢端口，因此必须这层门闩。
 
 ---
 

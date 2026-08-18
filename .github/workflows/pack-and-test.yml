@@ -178,7 +178,7 @@ jobs:
           OUT_DIR: dist/release-assets
           RUN_SMOKE: "0"
           BUILD_DESKTOP: "1"
-          BROWBOX_DESKTOP_WDIO: "1"
+          BROWBOX_DESKTOP_WDIO: ${{ runner.os == 'macOS' && '1' || '0' }}
           ALLOW_MISSING_DESKTOP: "0"
           BROWBOX_PACK_KINDS: ${{ matrix.pack_kinds }}
         run: |

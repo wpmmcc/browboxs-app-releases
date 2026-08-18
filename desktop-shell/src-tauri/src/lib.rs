@@ -434,7 +434,17 @@ pub fn run() {
         }));
 
     #[cfg(feature = "wdio-e2e")]
-    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    let builder = if std::env::var("TAURI_WEBDRIVER_PORT")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .is_some()
+    {
+        // Upstream init() falls back to port 4445 even when env is unset — that
+        // collides with tauri-driver --native-port. Only attach when CI/tests set it.
+        builder.plugin(tauri_plugin_wdio_webdriver::init())
+    } else {
+        builder
+    };
 
     builder
         .manage(AgentProc(Mutex::new(None)))
