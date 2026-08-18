@@ -1,7 +1,7 @@
 # browboxs-app-releases（公开 · MAIN 安装包 / pack / 更新）
 
 > **正式分支：`main`**。验证分支 `test/cross-pack-*` 仅试验，合入后以 main 为准。  
-> 全链路 SoT：`docs/RELEASE-MAIN-PIPELINE.md`
+> 全链路 SoT：core 仓 `docs/packaging/HOST-CROSS-AND-PUBLIC-KITS.md` · `docs/packaging/RELEASE-MAIN-PIPELINE.md`
 
 | 内容 | 说明 |
 |------|------|
@@ -24,7 +24,7 @@
 ## MAIN 流程
 
 ```text
-私有 prepare-kits (main) → kits-v* → 公开 pack-and-test (main)
+本机 host-cross-kits / make-kit → kits-v* → 公开 pack-and-test (main)
   → pack + product-smoke
   → publish v*
   → install-from-release

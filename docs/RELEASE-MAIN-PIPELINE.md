@@ -43,8 +43,8 @@
 | linux-x86_64 | 本机或 **`host-cross-kits.sh --docker-glibc22`** | `x86_64-unknown-linux-gnu` | 正式用户包优先 Docker 22.04 编（GLIBC ≤ 2.34） |
 | linux-aarch64 | 本机 cross（`gcc-aarch64-linux-gnu`） | `aarch64-unknown-linux-gnu` | host-cross 默认 |
 | windows-x86_64 | 本机 cross **mingw-gnu** | `x86_64-pc-windows-gnu` | host-cross 默认；非 msvc |
-| windows-aarch64 | **仅 Windows ARM 本机** | `aarch64-pc-windows-msvc` | Linux 宿主无法交叉 |
-| darwin-aarch64 / x86_64 | **仅 macOS 本机** | `*-apple-darwin` | Linux 宿主无法交叉 |
+| windows-aarch64 | 本机 cargo-xwin | `aarch64-pc-windows-msvc` | 公开 Win ARM 只用 msvc |
+| darwin-aarch64 / x86_64 | 本机 cargo-zigbuild + MacOSX SDK | `*-apple-darwin` | Linux 宿主可交叉（勿设 SDKROOT） |
 
 产出名：`kit-linux-x86_64.tar.gz` …（有本机才有对应 kit）  
 中转：公开仓 **prerelease** `kits-v<ver>`。
@@ -118,7 +118,7 @@ bash scripts/sync-to-public-releases.sh --all --version 0.2.5
 
 ### 2.4 mac / win-arm（需对应本机）
 
-Linux 宿主 **不能** 交叉出 darwin / windows-aarch64。若要这些 kit：在对应机器上跑 `make-kit.sh` 后 `publish-kit-to-public.sh` 上传到同一 `kits-v*`，再触发公开 pack（`allow_partial` 可先 true）。
+本机装齐 Zig+SDK 与 cargo-xwin 后可交叉出 darwin / windows-aarch64（msvc）kit。缺 kit 且 `allow_partial=true` 时该平台用户包与安装测会被跳过。
 ---
 
 ## 3. 测试四级（与 workflow 对齐）
