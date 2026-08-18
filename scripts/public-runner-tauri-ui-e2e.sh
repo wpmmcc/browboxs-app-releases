@@ -212,7 +212,6 @@ else
       BROWBOX_E2E_DRIVER="$E2E_DRIVER"
       TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)"
       PYTHONUNBUFFERED=1
-      DISPLAY="${DISPLAY:-:0}"
     )
     if [ "$E2E_DRIVER" = "embedded" ]; then
       XVFB_ENV+=(TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}")

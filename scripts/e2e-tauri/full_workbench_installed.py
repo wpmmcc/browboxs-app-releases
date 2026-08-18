@@ -227,9 +227,10 @@ def main() -> int:
             # functional e2e: simulated RPA steps succeed without live CDP session
             "BROWBOX_DRY_RUN": os.environ.get("BROWBOX_DRY_RUN", "1"),
             "BROWBOX_INJECT_OK_HARD": "0",
-            "DISPLAY": os.environ.get("DISPLAY", ":0"),
         }
     )
+    if os.environ.get("DISPLAY"):
+        agent_env["DISPLAY"] = os.environ["DISPLAY"]
     # free port
     subprocess.run(["fuser", "-k", f"{AGENT_PORT}/tcp"], check=False, capture_output=True)
     time.sleep(0.2)
