@@ -26,12 +26,8 @@
 | **macOS aarch64** | **`embedded`** | **硬门禁**（原生 ARM） |
 | **macOS x86_64** | **`embedded`** | **非硬门禁**：GitHub `macos-latest` 为 ARM，x86_64 走 Rosetta；WKWebView `execute/sync` 会 script timeout。原生 Intel 机仍可 STRICT=1 |
 
-Pack 阶段：
-
-- **macOS**：`BROWBOX_DESKTOP_WDIO=1` → `tauri build --features wdio-e2e`
-- **Linux / Windows**：不编入插件（走外部 `tauri-driver`）
-
-运行时仅当设置 `TAURI_WEBDRIVER_PORT` 时才 `init()` 插件。上游 `init()` 在环境变量未设时仍会监听 **4445**，会与 Linux `WebKitWebDriver` 抢端口，因此必须这层门闩。
+Pack 阶段全平台 `BROWBOX_DESKTOP_WDIO=1`（capabilities 需要 `wdio-webdriver:default`）。  
+**运行时**仅当设置 `TAURI_WEBDRIVER_PORT` 才 `init()`。上游 `init()` 未设环境变量时仍会监听 **4445**，会与 Linux `WebKitWebDriver` 抢端口。
 
 ---
 
