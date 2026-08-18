@@ -121,12 +121,19 @@ jobs:
       - name: Linux deps (Tauri build + xvfb + WebKit)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb curl ca-certificates unzip python3 \
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          # ubuntu-22.04 runners have been stalling on apt; fail fast instead of hanging 30m+
+          sudo timeout 90 apt-get update -qq \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            || sudo timeout 90 apt-get update -o Acquire::Retries=3
+          sudo timeout 240 apt-get install -y -qq \
+            -o DPkg::Lock::Timeout=60 \
+            xvfb curl ca-certificates unzip python3 \
             build-essential pkg-config libssl-dev \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libsoup-3.0-dev \
-            libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 || true
+            libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -479,13 +486,19 @@ jobs:
         if: matrix.ui_e2e == '1'
         with:
           node-version: "22"
-      - name: Linux install-test deps (xvfb + WebKitWebDriver for Tauri UI)
+      - name: Linux install-test deps (xvfb + WebKit for Tauri UI)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb curl ca-certificates python3 x11-utils \
-            libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 \
-            webkit2gtk-driver
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo timeout 90 apt-get update -qq \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            || sudo timeout 90 apt-get update
+          sudo timeout 180 apt-get install -y -qq \
+            -o DPkg::Lock::Timeout=60 \
+            xvfb curl ca-certificates python3 x11-utils \
+            libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1
+          sudo timeout 120 apt-get install -y -qq webkit2gtk-driver || true
 
       - uses: dtolnay/rust-toolchain@stable
         if: runner.os != 'macOS'
