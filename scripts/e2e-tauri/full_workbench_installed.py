@@ -266,17 +266,25 @@ def main() -> int:
     sid = None
 
     try:
-        caps: dict = {
-            "capabilities": {
-                "alwaysMatch": {
-                    "browserName": "tauri",
+        if DRIVER_MODE == "embedded":
+            caps: dict = {
+                "capabilities": {
+                    "alwaysMatch": {
+                        "browserName": "tauri",
+                    }
                 }
             }
-        }
-        if DRIVER_MODE != "embedded":
-            caps["capabilities"]["alwaysMatch"]["tauri:options"] = {
-                "application": str(DESKTOP),
-                "args": [],
+        else:
+            # WebKitWebDriver rejects browserName; tauri-driver maps tauri:options only.
+            caps = {
+                "capabilities": {
+                    "alwaysMatch": {
+                        "tauri:options": {
+                            "application": str(DESKTOP),
+                            "args": [],
+                        }
+                    }
+                }
             }
         j = wd("POST", "/session", caps, timeout=90)
         sid = j["value"]["sessionId"]
