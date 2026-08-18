@@ -532,14 +532,20 @@ jobs:
             } | sudo tee /etc/apt/apt.conf.d/99ci-proxy >/dev/null
           }
           configure_apt_proxy
-          sudo timeout 180 apt-get update -qq \
-            -o Acquire::Retries=5 -o Acquire::http::Timeout=60 \
-            || sudo timeout 180 apt-get update -o Acquire::Retries=5
-          sudo timeout 300 apt-get install -y -qq --no-install-recommends \
+          for attempt in 1 2 3; do
+            if sudo timeout 240 apt-get update -qq \
+              -o Acquire::Retries=5 -o Acquire::http::Timeout=60; then
+              break
+            fi
+            echo "::warning::apt-get update attempt $attempt failed; retrying..."
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep 15
+          done
+          sudo timeout 600 apt-get install -y -qq --no-install-recommends \
             -o DPkg::Lock::Timeout=120 \
             xvfb curl ca-certificates python3 x11-utils \
             libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1
-          sudo timeout 180 apt-get install -y -qq --no-install-recommends webkit2gtk-driver || true
+          sudo timeout 240 apt-get install -y -qq --no-install-recommends webkit2gtk-driver || true
 
       - uses: dtolnay/rust-toolchain@stable
         if: runner.os != 'macOS'
