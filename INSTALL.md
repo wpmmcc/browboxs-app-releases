@@ -8,6 +8,25 @@
 
 ---
 
+## 正式安装包（6 个 · 冻结）
+
+每个 **OS × 架构** 对应 **一个主安装包**（tree `tar.gz`），与 S0 交叉编译 kit 一一对应：
+
+| # | 操作系统 | 架构 | 主安装包（Release 资产） | S0 kit（`kits-v*`） |
+|---|----------|------|---------------------------|---------------------|
+| 1 | Linux | x86_64 | `browboxs-<ver>-linux-x86_64.tar.gz` | `kit-linux-x86_64.tar.gz` |
+| 2 | Linux | arm64 | `browboxs-<ver>-linux-aarch64.tar.gz` | `kit-linux-aarch64.tar.gz` |
+| 3 | macOS | x86_64 | `browboxs-<ver>-macos-x86_64.tar.gz` | `kit-darwin-x86_64.tar.gz` |
+| 4 | macOS | arm64 | `browboxs-<ver>-macos-aarch64.tar.gz` | `kit-darwin-aarch64.tar.gz` |
+| 5 | Windows | x86_64 | `browboxs-<ver>-windows-x86_64.tar.gz` | `kit-windows-x86_64.tar.gz` |
+| 6 | Windows | arm64 | `browboxs-<ver>-windows-aarch64.tar.gz` | `kit-windows-aarch64.tar.gz` |
+
+清单文件：`RELEASE-PRIMARY-6.txt`（每次 `v*` 发布自动生成）。
+
+**可选附加格式**（同一 cell 的变体，非额外平台）：Linux 的 `.deb` / `-portable.zip`；Windows 的 `-portable.tar.gz`。热更新与 `update-modules.sh` 以 **上表 6 个 tree tar.gz** 为准。
+
+---
+
 ## 操作系统
 
 ### Windows

@@ -329,19 +329,98 @@ jobs:
             echo "no assets to publish"
             exit 0
           fi
+          # ── Primary install packages: exactly 6 (linux/macos/windows × x86_64/aarch64) ──
+          V="${{ steps.meta.outputs.version }}"
+          PRIMARY=(
+            "browboxs-${V}-linux-x86_64.tar.gz"
+            "browboxs-${V}-linux-aarch64.tar.gz"
+            "browboxs-${V}-macos-x86_64.tar.gz"
+            "browboxs-${V}-macos-aarch64.tar.gz"
+            "browboxs-${V}-windows-x86_64.tar.gz"
+            "browboxs-${V}-windows-aarch64.tar.gz"
+          )
+          KIT_MAP=(
+            "kit-linux-x86_64.tar.gz"
+            "kit-linux-aarch64.tar.gz"
+            "kit-darwin-x86_64.tar.gz"
+            "kit-darwin-aarch64.tar.gz"
+            "kit-windows-x86_64.tar.gz"
+            "kit-windows-aarch64.tar.gz"
+          )
+          {
+            echo "# browboxs ${V} — primary install packages (6 cells)"
+            echo "# os/arch tree tar.gz — one per kit from host-cross-kits"
+            echo "# kit → user asset:"
+            for i in "${!PRIMARY[@]}"; do
+              echo "#   ${KIT_MAP[$i]} → ${PRIMARY[$i]}"
+            done
+            echo
+          } > out/RELEASE-PRIMARY-6.txt
+          missing=0
+          for f in "${PRIMARY[@]}"; do
+            if [ -f "out/$f" ]; then
+              echo "OK primary $f"
+              echo "$f" >> out/RELEASE-PRIMARY-6.txt
+            else
+              echo "::error::missing primary install package: $f (need kit ${KIT_MAP[$missing]:-?})"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::RELEASE requires all 6 primary tree packages (linux/macos/windows × arm/x86)"
+            ls -la out/browboxs-*.tar.gz 2>/dev/null || true
+            exit 1
+          fi
+          echo "primary_6=OK"
           (
             cd out
-            echo "# browboxs ${{ steps.meta.outputs.version }}"
+            echo "# browboxs ${V} — PRIMARY (6 install packages)"
+            for f in "${PRIMARY[@]}"; do
+              if [ -f "${f}.sha256" ]; then cat "${f}.sha256"
+              elif [ -f "$f" ]; then sha256sum "$f"
+              fi
+            done
+            echo
+            echo "# OPTIONAL (deb/portable/extra formats — same 6 cells)"
             for f in browboxs-*; do
               [ -f "$f" ] || continue
               case "$f" in *.sha256) continue ;; esac
-              if [ -f "${f}.sha256" ]; then cat "${f}.sha256"
-              else sha256sum "$f"
-              fi
+              case "$f" in
+                browboxs-${V}-linux-x86_64.tar.gz|\
+                browboxs-${V}-linux-aarch64.tar.gz|\
+                browboxs-${V}-macos-x86_64.tar.gz|\
+                browboxs-${V}-macos-aarch64.tar.gz|\
+                browboxs-${V}-windows-x86_64.tar.gz|\
+                browboxs-${V}-windows-aarch64.tar.gz) continue ;;
+              esac
+              case "$f" in *.tar.gz|*.zip|*.deb)
+                if [ -f "${f}.sha256" ]; then cat "${f}.sha256"
+                else sha256sum "$f"
+                fi
+                ;;
+              esac
             done
           ) > out/RELEASE-SHA256SUMS.txt
           TAG="${{ steps.meta.outputs.tag }}"
-          NOTES="browboxs ${{ steps.meta.outputs.version }} — multi-platform **binary packages** from source-free kits (no monorepo source). Public runners pack + product smoke (install / update own-source / UI-API matrix). Entry: browboxs-desktop. See INSTALL.md."
+          NOTES="$(cat <<EOF
+browboxs ${V} — **6 primary install packages** (tree tar.gz, one per OS × arch):
+
+| # | OS | Arch | Download |
+|---|-----|------|----------|
+| 1 | Linux | x86_64 | \`browboxs-${V}-linux-x86_64.tar.gz\` |
+| 2 | Linux | arm64 | \`browboxs-${V}-linux-aarch64.tar.gz\` |
+| 3 | macOS | x86_64 | \`browboxs-${V}-macos-x86_64.tar.gz\` |
+| 4 | macOS | arm64 | \`browboxs-${V}-macos-aarch64.tar.gz\` |
+| 5 | Windows | x86_64 | \`browboxs-${V}-windows-x86_64.tar.gz\` |
+| 6 | Windows | arm64 | \`browboxs-${V}-windows-aarch64.tar.gz\` |
+
+Kits: \`kits-v${V}\` (6 cells: \`kit-linux-*\`, \`kit-darwin-*\`, \`kit-windows-*\`).
+
+Linux may also ship \`.deb\` / \`-portable.zip\`; Windows may ship \`-portable\` — optional variants of the same 6 cells.
+
+Public runners: pack + install-from-release + headed UI e2e. Entry: **browboxs-desktop**. See INSTALL.md and RELEASE-PRIMARY-6.txt.
+EOF
+)"
           mapfile -t FILES < <(find out -type f | sort)
           echo "uploading ${#FILES[@]} files:"
           printf '  %s\n' "${FILES[@]}"
