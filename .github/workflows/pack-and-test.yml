@@ -127,17 +127,30 @@ jobs:
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          if [ -n "${HTTP_PROXY:-}" ] || [ -n "${HTTPS_PROXY:-}" ]; then
+          configure_apt_proxy() {
+            local proxy="${HTTPS_PROXY:-${HTTP_PROXY:-}}"
+            [ -n "$proxy" ] || return 0
+            case "$proxy" in
+              *127.0.0.1*|*localhost*)
+                echo "::warning::ignoring localhost proxy on GitHub-hosted runner (set a runner-reachable HTTP_PROXY secret)"
+                return 0
+                ;;
+            esac
+            if ! curl -sf --max-time 20 -x "$proxy" https://archive.ubuntu.com/ >/dev/null 2>&1; then
+              echo "::warning::proxy unreachable from runner; apt will run without proxy"
+              return 0
+            fi
             {
               [ -n "${HTTP_PROXY:-}" ] && echo "Acquire::http::Proxy \"${HTTP_PROXY}\";"
               [ -n "${HTTPS_PROXY:-}" ] && echo "Acquire::https::Proxy \"${HTTPS_PROXY}\";"
             } | sudo tee /etc/apt/apt.conf.d/99ci-proxy >/dev/null
             echo "apt proxy configured from repo secrets"
-          fi
+          }
+          configure_apt_proxy
           sudo timeout 180 apt-get update -qq \
             -o Acquire::Retries=5 -o Acquire::http::Timeout=60 \
             || sudo timeout 180 apt-get update -o Acquire::Retries=5
-          sudo timeout 600 apt-get install -y -qq \
+          sudo timeout 600 apt-get install -y -qq --no-install-recommends \
             -o DPkg::Lock::Timeout=120 \
             xvfb curl ca-certificates unzip python3 \
             build-essential pkg-config libssl-dev \
@@ -504,20 +517,29 @@ jobs:
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          if [ -n "${HTTP_PROXY:-}" ] || [ -n "${HTTPS_PROXY:-}" ]; then
+          configure_apt_proxy() {
+            local proxy="${HTTPS_PROXY:-${HTTP_PROXY:-}}"
+            [ -n "$proxy" ] || return 0
+            case "$proxy" in
+              *127.0.0.1*|*localhost*) return 0 ;;
+            esac
+            if ! curl -sf --max-time 20 -x "$proxy" https://archive.ubuntu.com/ >/dev/null 2>&1; then
+              return 0
+            fi
             {
               [ -n "${HTTP_PROXY:-}" ] && echo "Acquire::http::Proxy \"${HTTP_PROXY}\";"
               [ -n "${HTTPS_PROXY:-}" ] && echo "Acquire::https::Proxy \"${HTTPS_PROXY}\";"
             } | sudo tee /etc/apt/apt.conf.d/99ci-proxy >/dev/null
-          fi
+          }
+          configure_apt_proxy
           sudo timeout 180 apt-get update -qq \
             -o Acquire::Retries=5 -o Acquire::http::Timeout=60 \
             || sudo timeout 180 apt-get update -o Acquire::Retries=5
-          sudo timeout 300 apt-get install -y -qq \
+          sudo timeout 300 apt-get install -y -qq --no-install-recommends \
             -o DPkg::Lock::Timeout=120 \
             xvfb curl ca-certificates python3 x11-utils \
             libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1
-          sudo timeout 180 apt-get install -y -qq webkit2gtk-driver || true
+          sudo timeout 180 apt-get install -y -qq --no-install-recommends webkit2gtk-driver || true
 
       - uses: dtolnay/rust-toolchain@stable
         if: runner.os != 'macOS'
