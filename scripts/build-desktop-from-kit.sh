@@ -106,7 +106,12 @@ chmod +x "$SHELL_DIR/src-tauri/binaries/"* 2>/dev/null || true
   cd "$SHELL_DIR"
   if [ -f package-lock.json ]; then npm ci --ignore-scripts || npm ci; else npm install --no-audit --no-fund; fi
   # --no-bundle: we only need the desktop binary; pack-kit-to-release makes tar/deb.
-  npx tauri build --no-bundle --target "$DESKTOP_TARGET"
+  TAURI_ARGS=(build --no-bundle --target "$DESKTOP_TARGET")
+  if [ "${BROWBOX_DESKTOP_WDIO:-1}" = "1" ]; then
+    TAURI_ARGS+=(--features wdio-e2e)
+    echo "  wdio-e2e=1 (embedded WebDriver; macOS + env TAURI_WEBDRIVER_PORT)"
+  fi
+  npx tauri "${TAURI_ARGS[@]}"
 )
 
 OUT=""

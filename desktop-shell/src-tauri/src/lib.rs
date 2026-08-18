@@ -426,12 +426,17 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     pin_linux_prgname();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Second launch: focus existing main window (desktop client, not new browser).
             show_main(app);
-        }))
+        }));
+
+    #[cfg(feature = "wdio-e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .manage(AgentProc(Mutex::new(None)))
         .setup(|app| {
             #[cfg(target_os = "linux")]

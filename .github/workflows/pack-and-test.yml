@@ -178,6 +178,7 @@ jobs:
           OUT_DIR: dist/release-assets
           RUN_SMOKE: "0"
           BUILD_DESKTOP: "1"
+          BROWBOX_DESKTOP_WDIO: "1"
           ALLOW_MISSING_DESKTOP: "0"
           BROWBOX_PACK_KINDS: ${{ matrix.pack_kinds }}
         run: |
@@ -683,13 +684,13 @@ jobs:
           fi
           echo "== S3 API/function smoke OK for ${{ steps.meta.outputs.asset }} =="
 
-      # S3b: tauri-driver against installed browboxs-desktop (OS WebView).
-      # Linux = product hard gate. Windows = run, non-strict. macOS = skip (no driver).
+      # S3b: full workbench WebView e2e (tauri-driver Linux/Win; embedded WDIO on macOS).
       - name: S3b Tauri WebView e2e (installed desktop)
         if: steps.dl_pkg.outputs.present != 'false' && matrix.ui_e2e == '1'
         shell: bash
         env:
-          BROWBOX_TAURI_E2E_STRICT: ${{ runner.os == 'Linux' && '1' || '0' }}
+          BROWBOX_TAURI_E2E_STRICT: ${{ (runner.os == 'Linux' || runner.os == 'macOS') && '1' || '0' }}
+          BROWBOX_E2E_DRIVER: ${{ runner.os == 'macOS' && 'embedded' || '' }}
           BROWBOX_AGENT_PORT: "18985"
         run: |
           set -euo pipefail
@@ -709,8 +710,8 @@ jobs:
           set -e
           echo "S3b tauri WebView e2e exit=$ec"
           if [ "$ec" -ne 0 ]; then
-            if [ "${{ runner.os }}" = "Linux" ]; then
-              echo "::error::S3b Tauri WebView e2e FAILED on Linux — see install-tauri-e2e-report"
+            if [ "${{ runner.os }}" = "Linux" ] || [ "${{ runner.os }}" = "macOS" ]; then
+              echo "::error::S3b Tauri WebView e2e FAILED on ${{ runner.os }} — see install-tauri-e2e-report"
               cat "$BROWBOX_TAURI_E2E_REPORT/summary.txt" 2>/dev/null || true
               exit 1
             fi

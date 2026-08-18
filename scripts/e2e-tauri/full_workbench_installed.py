@@ -3,12 +3,15 @@
 Full installed-workbench functional e2e (real human-like ops + Agent API dual-assert).
 Covers ALL nav modules except claiming live RPA CDP browser actions.
 
-Stack: tauri-driver → WebKitWebDriver → browboxs-desktop (installed).
+Stack:
+  external: tauri-driver → WebKitWebDriver/msedgedriver → browboxs-desktop (Linux/Win)
+  embedded: TAURI_WEBDRIVER_PORT → in-app WebDriver (macOS WKWebView; also Linux/Win)
 """
 from __future__ import annotations
 
 import json
 import os
+import platform
 import signal
 import subprocess
 import time
@@ -20,10 +23,15 @@ PREFIX = Path(os.environ.get("BROWBOX_PREFIX", Path.home() / ".local/opt/browbox
 DESKTOP = Path(os.environ.get("BROWBOX_DESKTOP", PREFIX / "bin/browboxs-desktop"))
 AGENT = Path(os.environ.get("BROWBOX_AGENT_BIN", PREFIX / "bin/browboxs-agent"))
 DRIVER = Path(os.environ.get("TAURI_DRIVER", Path.home() / ".cargo/bin/tauri-driver"))
+DRIVER_MODE = os.environ.get(
+    "BROWBOX_E2E_DRIVER",
+    "embedded" if platform.system() == "Darwin" else "external",
+).lower()
 PORT = int(os.environ.get("TAURI_DRIVER_PORT", "4444"))
-NATIVE = int(os.environ.get("TAURI_NATIVE_PORT", "4445"))
+EMBED_PORT = int(os.environ.get("TAURI_WEBDRIVER_PORT", os.environ.get("TAURI_NATIVE_PORT", "4445")))
+NATIVE = EMBED_PORT
 AGENT_PORT = int(os.environ.get("BROWBOX_AGENT_PORT", "18910"))
-WD = f"http://127.0.0.1:{PORT}"
+WD = f"http://127.0.0.1:{PORT if DRIVER_MODE != 'embedded' else EMBED_PORT}"
 OUT = Path(os.environ.get("BROWBOX_E2E_LOG_DIR", "/tmp/browboxs-full-workbench-e2e"))
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -131,12 +139,24 @@ def wait_agent(token: str = "", tries: int = 80) -> bool:
     return False
 
 
+def wait_webdriver(tries: int = 80) -> bool:
+    for _ in range(tries):
+        try:
+            with urllib.request.urlopen(f"{WD}/status", timeout=2) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.25)
+    return False
+
+
 def main() -> int:
     global pass_n, fail_n
     if not DESKTOP.is_file():
         log_fail("desktop binary", str(DESKTOP))
         return 1
-    if not DRIVER.is_file():
+    if DRIVER_MODE != "embedded" and not DRIVER.is_file():
         log_fail("tauri-driver", str(DRIVER))
         return 1
 
@@ -190,31 +210,49 @@ def main() -> int:
 
     env = agent_env.copy()
     env["BROWBOX_AGENT_BIN"] = str(AGENT)
-    td = subprocess.Popen(
-        [str(DRIVER), "--port", str(PORT), "--native-port", str(NATIVE)],
-        stdout=open(OUT / "tauri-driver.log", "w"),
-        stderr=subprocess.STDOUT,
-        env=env,
-    )
-    time.sleep(1.5)
+    env["BROWBOX_E2E_KEEP_SPLASH"] = os.environ.get("BROWBOX_E2E_KEEP_SPLASH", "1")
+    td: subprocess.Popen | None = None
+    desktop_proc: subprocess.Popen | None = None
+
+    if DRIVER_MODE == "embedded":
+        env["TAURI_WEBDRIVER_PORT"] = str(EMBED_PORT)
+        desktop_proc = subprocess.Popen(
+            [str(DESKTOP)],
+            stdout=open(OUT / "desktop-embedded.log", "w"),
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        if not wait_webdriver():
+            log_fail("embedded webdriver /status", f"port={EMBED_PORT}")
+            desktop_proc.kill()
+            agent_proc.kill()
+            return 1
+        log_pass("embedded webdriver ready", f"port={EMBED_PORT}")
+    else:
+        td = subprocess.Popen(
+            [str(DRIVER), "--port", str(PORT), "--native-port", str(NATIVE)],
+            stdout=open(OUT / "tauri-driver.log", "w"),
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        time.sleep(1.5)
+
     sid = None
 
     try:
-        j = wd(
-            "POST",
-            "/session",
-            {
-                "capabilities": {
-                    "alwaysMatch": {
-                        "tauri:options": {
-                            "application": str(DESKTOP),
-                            "args": [],
-                        }
-                    }
+        caps: dict = {
+            "capabilities": {
+                "alwaysMatch": {
+                    "browserName": "tauri",
                 }
-            },
-            timeout=90,
-        )
+            }
+        }
+        if DRIVER_MODE != "embedded":
+            caps["capabilities"]["alwaysMatch"]["tauri:options"] = {
+                "application": str(DESKTOP),
+                "args": [],
+            }
+        j = wd("POST", "/session", caps, timeout=90)
         sid = j["value"]["sessionId"]
         log_pass("webdriver session", sid[:12])
 
@@ -493,13 +531,27 @@ return {ok:true, value: el.value};
             except Exception:
                 pass
         try:
-            td.send_signal(signal.SIGTERM)
-            td.wait(timeout=5)
+            wd("DELETE", f"/session/{sid}", None, timeout=10)
         except Exception:
+            pass
+        if td is not None:
             try:
-                td.kill()
+                td.send_signal(signal.SIGTERM)
+                td.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    td.kill()
+                except Exception:
+                    pass
+        if desktop_proc is not None:
+            try:
+                desktop_proc.send_signal(signal.SIGTERM)
+                desktop_proc.wait(timeout=8)
+            except Exception:
+                try:
+                    desktop_proc.kill()
+                except Exception:
+                    pass
         try:
             agent_proc.terminate()
             agent_proc.wait(timeout=5)
@@ -517,6 +569,8 @@ return {ok:true, value: el.value};
         "results": results,
         "out": str(OUT),
         "prefix": str(PREFIX),
+        "driver_mode": DRIVER_MODE,
+        "webdriver_url": WD,
     }
     (OUT / "SUMMARY.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
     print(json.dumps({"pass": pass_n, "fail": fail_n, "out": str(OUT)}, ensure_ascii=False))

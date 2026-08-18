@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# S3b product UI gate: tauri-driver → OS WebView of **installed** browboxs-desktop.
-# Runs full-workbench (all nav + create profile + API dual-assert), not a 3-click smoke.
-#
-# Linux: hard fail (WebKitWebDriver + xvfb + full_workbench_installed.py).
-# Windows: full workbench when msedgedriver present (non-strict unless STRICT=1).
-# macOS: tauri-driver direct unsupported — see docs/qa/MACOS-TAURI-WEBDRIVER.md
-#        (embedded @wdio/tauri-service or CrabNebula; not wired on release binary yet).
+# S3b product UI gate: full workbench against **installed** browboxs-desktop WebView.
+# Linux/Win: tauri-driver + OS native driver. macOS: embedded tauri-plugin-wdio-webdriver.
 #
 # Usage:
 #   bash scripts/public-runner-tauri-ui-e2e.sh /path/to/install-root
@@ -25,8 +20,15 @@ STRICT="${BROWBOX_TAURI_E2E_STRICT:-}"
 E2E_SUITE="${BROWBOX_TAURI_E2E_SUITE:-full}"
 if [ -z "$STRICT" ]; then
   case "$OS" in
-    Linux*) STRICT=1 ;;
+    Linux*|Darwin*) STRICT=1 ;;
     *) STRICT=0 ;;
+  esac
+fi
+E2E_DRIVER="${BROWBOX_E2E_DRIVER:-}"
+if [ -z "$E2E_DRIVER" ]; then
+  case "$OS" in
+    Darwin*) E2E_DRIVER=embedded ;;
+    *) E2E_DRIVER=external ;;
   esac
 fi
 
@@ -50,18 +52,13 @@ finish() {
 echo "== public-runner-tauri-ui-e2e (S3b Tauri WebView) =="
 echo "  install=$INSTALL"
 echo "  report=$REPORT"
-echo "  os=$OS strict=$STRICT suite=$E2E_SUITE"
+echo "  os=$OS strict=$STRICT suite=$E2E_SUITE driver=$E2E_DRIVER"
 
 case "$OS" in
   Darwin*)
-    warn "macOS: external tauri-driver unsupported (no WKWebView native driver)"
-    echo "macos_webdriver_options=embedded-wdio-plugin|crabnebula|community-tauri-wd" >>"$REPORT/summary.txt"
-    echo "see=docs/qa/MACOS-TAURI-WEBDRIVER.md" >>"$REPORT/summary.txt"
-    if [ -n "${CN_API_KEY:-}" ] && [ "${BROWBOX_TAURI_MAC_TRY_CRABNEBULA:-0}" = "1" ]; then
-      warn "CN_API_KEY present but CrabNebula path not wired in public runner yet"
+    if [ "$E2E_DRIVER" != "embedded" ]; then
+      warn "macOS requires BROWBOX_E2E_DRIVER=embedded (wdio-e2e feature in desktop binary)"
     fi
-    finish
-    exit $?
     ;;
 esac
 
@@ -82,21 +79,27 @@ ok "desktop binary present"
 chmod +x "$DESKTOP" "$AGENT" 2>/dev/null || true
 
 export PATH="${HOME}/.cargo/bin:${PATH}"
-if ! command -v tauri-driver >/dev/null 2>&1; then
-  bad "tauri-driver not on PATH (install with cargo install tauri-driver)"
-  finish
-  exit $?
+if [ "$E2E_DRIVER" = "external" ]; then
+  if ! command -v tauri-driver >/dev/null 2>&1; then
+    bad "tauri-driver not on PATH (install with cargo install tauri-driver)"
+    finish
+    exit $?
+  fi
+  ok "tauri-driver $(command -v tauri-driver)"
+else
+  ok "embedded webdriver (TAURI_WEBDRIVER_PORT=${TAURI_WEBDRIVER_PORT:-4445})"
 fi
-ok "tauri-driver $(command -v tauri-driver)"
 
 case "$OS" in
   Linux*)
+    if [ "$E2E_DRIVER" = "external" ]; then
     if ! command -v WebKitWebDriver >/dev/null 2>&1; then
       bad "WebKitWebDriver missing (apt install webkit2gtk-driver)"
       finish
       exit $?
     fi
     ok "WebKitWebDriver $(command -v WebKitWebDriver)"
+    fi
     ;;
   MINGW*|MSYS*|CYGWIN*)
     if ! command -v msedgedriver >/dev/null 2>&1 && [ ! -f ./msedgedriver.exe ]; then
@@ -135,7 +138,9 @@ export BROWBOX_E2E_LOG_DIR="$REPORT"
 export BROWBOX_AGENT_PORT="${BROWBOX_AGENT_PORT:-18985}"
 export BROWBOX_E2E_KEEP_SPLASH=1
 export BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}"
-export TAURI_DRIVER="$(command -v tauri-driver)"
+export BROWBOX_E2E_DRIVER="$E2E_DRIVER"
+export TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}"
+export TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)"
 
 run_full_workbench() {
   if [ ! -f "$E2E_DIR/full_workbench_installed.py" ]; then
@@ -187,7 +192,8 @@ else
           BROWBOX_E2E_LOG_DIR="$REPORT" BROWBOX_TAURI_E2E_REPORT="$REPORT" \
           BROWBOX_AGENT_PORT="${BROWBOX_AGENT_PORT:-18985}" \
           BROWBOX_E2E_KEEP_SPLASH=1 BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}" \
-          TAURI_DRIVER="$(command -v tauri-driver)" \
+          BROWBOX_E2E_DRIVER="$E2E_DRIVER" TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}" \
+          TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)" \
           DISPLAY="${DISPLAY:-:0}" \
       python3 "$E2E_DIR/full_workbench_installed.py" \
       >"$REPORT/full-workbench.log" 2>&1
