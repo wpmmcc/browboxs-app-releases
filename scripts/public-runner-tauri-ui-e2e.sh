@@ -139,8 +139,14 @@ export BROWBOX_AGENT_PORT="${BROWBOX_AGENT_PORT:-18985}"
 export BROWBOX_E2E_KEEP_SPLASH=1
 export BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}"
 export BROWBOX_E2E_DRIVER="$E2E_DRIVER"
-export TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}"
 export TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)"
+if [ "$E2E_DRIVER" = "embedded" ]; then
+  export TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}"
+else
+  unset TAURI_WEBDRIVER_PORT
+  export TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
+  export TAURI_NATIVE_PORT="${TAURI_NATIVE_PORT:-4445}"
+fi
 
 run_full_workbench() {
   if [ ! -f "$E2E_DIR/full_workbench_installed.py" ]; then
@@ -186,17 +192,27 @@ if [ "$E2E_SUITE" = "smoke" ]; then
   fi
 else
   if [[ "$OS" == Linux* ]] && command -v xvfb-run >/dev/null 2>&1; then
-    xvfb-run -a -s "-screen 0 1440x900x24" \
-      env BROWBOX_PREFIX="$INSTALL" BROWBOX_INSTALL_ROOT="$INSTALL" \
-          BROWBOX_DESKTOP="$DESKTOP" BROWBOX_AGENT_BIN="$AGENT" \
-          BROWBOX_E2E_LOG_DIR="$REPORT" BROWBOX_TAURI_E2E_REPORT="$REPORT" \
-          BROWBOX_AGENT_PORT="${BROWBOX_AGENT_PORT:-18985}" \
-          BROWBOX_E2E_KEEP_SPLASH=1 BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}" \
-          BROWBOX_E2E_DRIVER="$E2E_DRIVER" TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}" \
-          TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)" \
-          DISPLAY="${DISPLAY:-:0}" \
-      python3 "$E2E_DIR/full_workbench_installed.py" \
-      >"$REPORT/full-workbench.log" 2>&1
+    XVFB_ENV=(
+      BROWBOX_PREFIX="$INSTALL" BROWBOX_INSTALL_ROOT="$INSTALL"
+      BROWBOX_DESKTOP="$DESKTOP" BROWBOX_AGENT_BIN="$AGENT"
+      BROWBOX_E2E_LOG_DIR="$REPORT" BROWBOX_TAURI_E2E_REPORT="$REPORT"
+      BROWBOX_AGENT_PORT="${BROWBOX_AGENT_PORT:-18985}"
+      BROWBOX_E2E_KEEP_SPLASH=1 BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}"
+      BROWBOX_E2E_DRIVER="$E2E_DRIVER"
+      TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)"
+      DISPLAY="${DISPLAY:-:0}"
+    )
+    if [ "$E2E_DRIVER" = "embedded" ]; then
+      XVFB_ENV+=(TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}")
+      xvfb-run -a -s "-screen 0 1440x900x24" \
+        env "${XVFB_ENV[@]}" python3 "$E2E_DIR/full_workbench_installed.py" \
+        >"$REPORT/full-workbench.log" 2>&1
+    else
+      XVFB_ENV+=(TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}" TAURI_NATIVE_PORT="${TAURI_NATIVE_PORT:-4445}")
+      xvfb-run -a -s "-screen 0 1440x900x24" \
+        env -u TAURI_WEBDRIVER_PORT "${XVFB_ENV[@]}" python3 "$E2E_DIR/full_workbench_installed.py" \
+        >"$REPORT/full-workbench.log" 2>&1
+    fi
     EC=$?
   else
     run_full_workbench

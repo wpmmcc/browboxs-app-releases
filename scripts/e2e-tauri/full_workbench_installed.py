@@ -28,10 +28,10 @@ DRIVER_MODE = os.environ.get(
     "embedded" if platform.system() == "Darwin" else "external",
 ).lower()
 PORT = int(os.environ.get("TAURI_DRIVER_PORT", "4444"))
-EMBED_PORT = int(os.environ.get("TAURI_WEBDRIVER_PORT", os.environ.get("TAURI_NATIVE_PORT", "4445")))
-NATIVE = EMBED_PORT
+NATIVE = int(os.environ.get("TAURI_NATIVE_PORT", "4445"))
+EMBED_PORT = int(os.environ.get("TAURI_WEBDRIVER_PORT", "4445"))
 AGENT_PORT = int(os.environ.get("BROWBOX_AGENT_PORT", "18910"))
-WD = f"http://127.0.0.1:{PORT if DRIVER_MODE != 'embedded' else EMBED_PORT}"
+WD = f"http://127.0.0.1:{EMBED_PORT if DRIVER_MODE == 'embedded' else PORT}"
 OUT = Path(os.environ.get("BROWBOX_E2E_LOG_DIR", "/tmp/browboxs-full-workbench-e2e"))
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -83,9 +83,13 @@ def wd(method: str, path: str, body: dict | None = None, timeout: float = 60):
         method=method,
         headers={"Content-Type": "application/json"} if body is not None else {},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read().decode()
-        return json.loads(raw) if raw else {}
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:800]
+        raise RuntimeError(f"HTTP {e.code} {method} {path}: {detail}") from e
 
 
 def agent_api(method: str, path: str, token: str, body: dict | None = None, timeout: float = 30):
@@ -254,7 +258,11 @@ def main() -> int:
             agent_proc.kill()
             return 1
         log_pass("embedded webdriver ready", f"port={EMBED_PORT}")
+        # WKWebView may report /status before a page exists; brief settle.
+        time.sleep(2.0)
     else:
+        # Release binaries include wdio-e2e; must not listen on native-driver port.
+        env.pop("TAURI_WEBDRIVER_PORT", None)
         td = subprocess.Popen(
             [str(DRIVER), "--port", str(PORT), "--native-port", str(NATIVE)],
             stdout=open(OUT / "tauri-driver.log", "w"),
@@ -286,9 +294,19 @@ def main() -> int:
                     }
                 }
             }
-        j = wd("POST", "/session", caps, timeout=90)
+        last_err: Exception | None = None
+        j = None
+        for attempt in range(1, 9):
+            try:
+                j = wd("POST", "/session", caps, timeout=90)
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(1.5)
+        if j is None:
+            raise last_err or RuntimeError("session create failed")
         sid = j["value"]["sessionId"]
-        log_pass("webdriver session", sid[:12])
+        log_pass("webdriver session", sid[:12] + (f" attempt={attempt}" if attempt > 1 else ""))
 
         def js(script: str, args: list | None = None):
             return wd(
