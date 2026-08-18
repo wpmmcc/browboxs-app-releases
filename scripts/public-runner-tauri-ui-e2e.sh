@@ -27,7 +27,7 @@ fi
 E2E_DRIVER="${BROWBOX_E2E_DRIVER:-}"
 if [ -z "$E2E_DRIVER" ]; then
   case "$OS" in
-    Darwin*) E2E_DRIVER=embedded ;;
+    Darwin*|Linux*) E2E_DRIVER=embedded ;;
     *) E2E_DRIVER=external ;;
   esac
 fi
@@ -150,6 +150,7 @@ export BROWBOX_E2E_KEEP_SPLASH=1
 export BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}"
 export BROWBOX_E2E_DRIVER="$E2E_DRIVER"
 export TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)"
+export PYTHONUNBUFFERED=1
 if [ "$E2E_DRIVER" = "embedded" ]; then
   export TAURI_WEBDRIVER_PORT="${TAURI_WEBDRIVER_PORT:-4445}"
 else
@@ -210,6 +211,7 @@ else
       BROWBOX_E2E_KEEP_SPLASH=1 BROWBOX_DRY_RUN="${BROWBOX_DRY_RUN:-1}"
       BROWBOX_E2E_DRIVER="$E2E_DRIVER"
       TAURI_DRIVER="$(command -v tauri-driver 2>/dev/null || true)"
+      PYTHONUNBUFFERED=1
       DISPLAY="${DISPLAY:-:0}"
     )
     if [ "$E2E_DRIVER" = "embedded" ]; then

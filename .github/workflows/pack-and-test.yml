@@ -690,7 +690,7 @@ jobs:
         shell: bash
         env:
           BROWBOX_TAURI_E2E_STRICT: ${{ (runner.os == 'Linux' || contains(matrix.asset, 'macos-aarch64')) && '1' || '0' }}
-          BROWBOX_E2E_DRIVER: ${{ runner.os == 'macOS' && 'embedded' || '' }}
+          BROWBOX_E2E_DRIVER: ${{ (runner.os == 'Linux' || runner.os == 'macOS') && 'embedded' || '' }}
           BROWBOX_AGENT_PORT: "18985"
         run: |
           set -euo pipefail
