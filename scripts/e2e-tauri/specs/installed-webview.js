@@ -1,6 +1,5 @@
 /**
- * Product UI gate: installed browboxs-desktop OS WebView (tauri-driver).
- * Requires workbench-nav in the real shell — splash-only is a FAIL.
+ * Smoke-only fallback. Product gate on Linux is full_workbench_installed.py.
  */
 
 async function dumpUi(label) {
