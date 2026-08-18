@@ -146,6 +146,22 @@ esac
 STAGE="$WORK/browboxs"
 test -f "$STAGE/bin/browboxs-agent" -o -f "$STAGE/bin/browboxs-agent.exe"
 
+# Public runners: compile Tauri shell here (kit is agent+server+ui only).
+BUILD_DESKTOP="${BUILD_DESKTOP:-0}"
+if [ "$BUILD_DESKTOP" = "1" ]; then
+  BD=""
+  for s in \
+    "$ROOT/scripts/build-desktop-from-kit.sh" \
+    "$ROOT/packaging/public-app-releases/scripts/build-desktop-from-kit.sh"; do
+    if [ -f "$s" ]; then BD="$s"; break; fi
+  done
+  if [ -z "$BD" ]; then
+    echo "ERROR: BUILD_DESKTOP=1 but build-desktop-from-kit.sh missing" >&2
+    exit 1
+  fi
+  bash "$BD" --stage "$STAGE" --work "$WORK"
+fi
+
 # Ensure launchers do not force SERVE_UI
 if [ -f "$STAGE/bin/browboxs-start-agent" ]; then
   if grep -q 'BROWBOX_SERVE_UI=1' "$STAGE/bin/browboxs-start-agent" 2>/dev/null; then

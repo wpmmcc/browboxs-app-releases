@@ -118,12 +118,24 @@ jobs:
           echo "kit_tag=$K" >> "$GITHUB_OUTPUT"
           echo "BROWBOX_VERSION=$V" >> "$GITHUB_ENV"
 
-      - name: Linux deps (xvfb + tools for headed UI e2e)
+      - name: Linux deps (Tauri build + xvfb + WebKit)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb curl ca-certificates unzip python3 \
+            build-essential pkg-config libssl-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libsoup-3.0-dev \
             libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 || true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-shell/src-tauri
+          prefix-key: desktop-shell-${{ matrix.platform_key }}
 
       - uses: actions/setup-node@v4
         with:
@@ -165,7 +177,8 @@ jobs:
           KIT: kits/${{ matrix.kit_name }}
           OUT_DIR: dist/release-assets
           RUN_SMOKE: "0"
-          ALLOW_MISSING_DESKTOP: ${{ inputs.require_desktop == true && '0' || '1' }}
+          BUILD_DESKTOP: "1"
+          ALLOW_MISSING_DESKTOP: "0"
           BROWBOX_PACK_KINDS: ${{ matrix.pack_kinds }}
         run: |
           set -euo pipefail
@@ -176,7 +189,7 @@ jobs:
             echo "platform=${{ matrix.platform_key }}"
             echo "kinds=${{ matrix.pack_kinds }}"
             echo "kit_tag=${{ steps.meta.outputs.kit_tag }}"
-            echo "hybrid=binary-kit-only"
+            echo "hybrid=kit-agent-server+runner-desktop"
           } > "dist/release-assets/CELL-${{ matrix.platform_key }}.txt"
           ls -lah dist/release-assets/
 
@@ -185,7 +198,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          BROWBOX_SMOKE_REQUIRE_DESKTOP: ${{ inputs.require_desktop == true && '1' || '0' }}
+          BROWBOX_SMOKE_REQUIRE_DESKTOP: "1"
           BROWBOX_SMOKE_PORT: "18971"
           # Soft: post-pack SHA256SUMS may soft-fail after manifest stamp; partial latest OK
           BROWBOX_SMOKE_SOFT: "1"
@@ -576,7 +589,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          BROWBOX_SMOKE_REQUIRE_DESKTOP: ${{ inputs.require_desktop == true && '1' || '0' }}
+          BROWBOX_SMOKE_REQUIRE_DESKTOP: "1"
           BROWBOX_SMOKE_SOFT: "1"
           BROWBOX_SMOKE_PORT: "18975"
         run: |
@@ -619,7 +632,7 @@ jobs:
           # Agent unrunnable → WARN; Playwright menu clicks on Linux → hard FAIL (STRICT=1)
           BROWBOX_SMOKE_SOFT: "1"
           BROWBOX_UI_E2E_STRICT: ${{ runner.os == 'Linux' && '1' || '0' }}
-          BROWBOX_UI_E2E_REQUIRE_DESKTOP: ${{ inputs.require_desktop == true && '1' || '0' }}
+          BROWBOX_UI_E2E_REQUIRE_DESKTOP: "1"
           BROWBOX_UI_E2E_PORT_AGENT: "18976"
           BROWBOX_UI_E2E_PORT_UI: "18980"
         run: |

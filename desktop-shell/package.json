@@ -1,0 +1,12 @@
+{
+  "name": "browboxs-desktop-shell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Public-runner Tauri shell only. Agent/server/UI come from source-free kits.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

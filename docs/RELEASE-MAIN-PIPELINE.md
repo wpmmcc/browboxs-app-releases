@@ -23,7 +23,7 @@
 | **S0 Kit** | **本机**（私有 monorepo 检出）· `scripts/host-cross-kits.sh` / `make-kit.sh` | 本机 Rust **交叉编译** agent/server → harden → `kit-<os>-<arch>.tar.gz` 上传公开 prerelease `kits-v*` | **私有仓 GitHub Actions 已关闭**；禁止再在 private 上跑 prepare-kits/release runner |
 | **S1 Pack** | 公开 `browboxs-app-releases` **`main`** · `pack-and-test` | 消费 kit；`pack-kit-to-release` 组合 **可开源内容**（scripts / INSTALL / update-modules / manifest 通道） | **禁止** `cargo build` 核心 crates |
 | **S2 Install** | 同 workflow `install-from-release` | 从 **正式 `v*` Release** 下载用户包 → 解压/`install-system` → 结构断言 | 不测 monorepo checkout |
-| **S3 UI/功能** | 同 runner：`product-smoke` + **`public-runner-desktop-ui-e2e.sh`** | S3a API 矩阵；**S3b Playwright 有头**（Linux=xvfb 真窗口点侧栏）；可选 desktop 进程 | 引擎真开核需 kit 含 engines（可 soft） |
+| **S3 UI/功能** | 同 runner 上 `product-smoke` +（扩展）UI 功能门禁 | 安装根上：鉴权、工作台依赖 API、更新 own-source；Linux xvfb desktop；有头点击 lab 另轨 | 不在公开仓编译 React 业务源（UI dist 已在 kit） |
 
 **废弃 / 禁止**：
 
@@ -43,8 +43,8 @@
 | linux-x86_64 | 本机或 **`host-cross-kits.sh --docker-glibc22`** | `x86_64-unknown-linux-gnu` | 正式用户包优先 Docker 22.04 编（GLIBC ≤ 2.34） |
 | linux-aarch64 | 本机 cross（`gcc-aarch64-linux-gnu`） | `aarch64-unknown-linux-gnu` | host-cross 默认 |
 | windows-x86_64 | 本机 cross **mingw-gnu** | `x86_64-pc-windows-gnu` | host-cross 默认；非 msvc |
-| windows-aarch64 | 本机 cargo-xwin | `aarch64-pc-windows-msvc` | 公开 Win ARM 只用 msvc |
-| darwin-aarch64 / x86_64 | 本机 cargo-zigbuild + MacOSX SDK | `*-apple-darwin` | Linux 宿主可交叉（勿设 SDKROOT） |
+| windows-aarch64 | **仅 Windows ARM 本机** | `aarch64-pc-windows-msvc` | Linux 宿主无法交叉 |
+| darwin-aarch64 / x86_64 | **仅 macOS 本机** | `*-apple-darwin` | Linux 宿主无法交叉 |
 
 产出名：`kit-linux-x86_64.tar.gz` …（有本机才有对应 kit）  
 中转：公开仓 **prerelease** `kits-v<ver>`。
@@ -118,7 +118,7 @@ bash scripts/sync-to-public-releases.sh --all --version 0.2.5
 
 ### 2.4 mac / win-arm（需对应本机）
 
-本机装齐 Zig+SDK 与 cargo-xwin 后可交叉出 darwin / windows-aarch64（msvc）kit。缺 kit 且 `allow_partial=true` 时该平台用户包与安装测会被跳过。
+Linux 宿主 **不能** 交叉出 darwin / windows-aarch64。若要这些 kit：在对应机器上跑 `make-kit.sh` 后 `publish-kit-to-public.sh` 上传到同一 `kits-v*`，再触发公开 pack（`allow_partial` 可先 true）。
 ---
 
 ## 3. 测试四级（与 workflow 对齐）
@@ -128,13 +128,9 @@ bash scripts/sync-to-public-releases.sh --all --version 0.2.5
 | **T0** | Kit 边界 | prepare-kits / pack 下载后 | 禁 crates/Cargo.toml；sha256 | **硬失败** |
 | **T1** | Pack smoke | pack 后 tree（+ portable/deb） | `public-runner-product-smoke.sh` | 结构/源码泄露硬失败；API/鉴权 soft 可 WARN |
 | **T2** | Install-from-release | publish 后 | 下载 `v*` 用户包 → 安装根 → 再 smoke | 缺包（optional 平台）可 skip；agent/server 必须 PASS |
-| **T3a** | UI-API 功能 | 安装根 | `public-runner-ui-function-smoke.sh` → product-smoke UI-API 矩阵 | 结构硬失败；API soft 可 WARN |
-| **T3b** | **有头 UI 点击** | 安装根 | `public-runner-desktop-ui-e2e.sh` + Playwright：静态 `ui/desktop` + agent，**headed Chromium 点侧栏**（Linux xvfb）；有 desktop 则 xvfb 起进程 | **Linux live 硬门禁**；Win/mac soft；agent 不可跑 soft |
+| **T3** | UI/功能 | 安装根上 | **默认**：UI 依赖 API 矩阵（profiles/proxies/workflows/cookies/fingerprint/updates）+ 更新 own-source；**Linux**：desktop xvfb 进程；**有头点击**：lab / 自托管（`tests/e2e_headed_product.sh`、workbench mjs） | CI free runner 默认 T3-API；T3-headed 不阻塞 main 发版除非显式开启 |
 
-**产品入口**：`browboxs-desktop`；Agent 默认不 SERVE_UI。  
-S3b 在 free runner 上用 **安装包内 `ui/desktop` + agent**，Playwright **有头** Chromium（Linux=xvfb）点工作台侧栏——验收 UI 与 agent 契约，不把「浏览器当产品入口」写进 INSTALL。正式用户仍走 desktop 壳。
-
-**linux-x86_64 kit 正式路径**：`scripts/host-cross-kits.sh --docker-glibc22`（ubuntu:22.04 容器编，GLIBC≤2.34），见脚本注释与 §1.1。
+**产品入口**：`browboxs-desktop`；Agent 默认不 SERVE_UI。T3 不以「浏览器打开 Local API」为通过标准。
 
 ---
 
